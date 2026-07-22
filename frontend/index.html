@@ -336,16 +336,9 @@
         <div class="modal-footer py-2 px-3 bg-light d-flex justify-content-between align-items-center flex-wrap gap-2">
           <div class="d-flex align-items-center gap-3">
             <span class="text-muted small fw-semibold" id="cropDimensions">Selection: 0.0 × 0.0 mm</span>
-            <div class="form-check form-switch mb-0">
-              <input class="form-check-input" type="checkbox" id="chkSubjectBW">
-              <label class="form-check-label small fw-semibold text-secondary" for="chkSubjectBW" style="cursor:pointer;">
-                <i class="bi bi-file-earmark-binary me-1"></i>B&W + Clean Background (Option B)
-              </label>
-            </div>
           </div>
           <div class="d-flex gap-2">
-            <button class="btn btn-outline-primary btn-sm" id="btnAutoDetectCrop" title="Detect entire page boundaries"><i class="bi bi-file-earmark-aspect-ratio me-1"></i>Detect Page</button>
-            <button class="btn btn-outline-primary btn-sm" id="btnDetectSubject" title="Detect foreground subject (banknote/photo)"><i class="bi bi-wallet2 me-1"></i>Detect Subject</button>
+            <button class="btn btn-outline-info btn-sm fw-semibold" id="btnAutoDetect" title="Auto detect the banknote/document subject using B&amp;W analysis"><i class="bi bi-stars me-1"></i>Auto Detect</button>
             <button class="btn btn-outline-secondary btn-sm" id="btnResetCrop">Reset</button>
             <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
             <button class="btn btn-primary btn-sm fw-semibold" id="btnApplyCrop"><i class="bi bi-check-lg me-1"></i>Apply Crop</button>
@@ -366,6 +359,6 @@
     }
   </script>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

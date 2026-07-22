@@ -939,9 +939,7 @@ class ScannerApp {
     this.cropCanvas = document.getElementById('cropCanvas');
     this.cropBox = document.getElementById('cropBox');
     this.cropDimensions = document.getElementById('cropDimensions');
-    this.btnAutoDetectCrop = document.getElementById('btnAutoDetectCrop');
-    this.btnDetectSubject = document.getElementById('btnDetectSubject');
-    this.chkSubjectBW = document.getElementById('chkSubjectBW');
+    this.btnAutoDetect = document.getElementById('btnAutoDetect');
     this.btnResetCrop = document.getElementById('btnResetCrop');
     this.btnApplyCrop = document.getElementById('btnApplyCrop');
 
@@ -1206,11 +1204,8 @@ class ScannerApp {
     if (this.btnResetCrop) {
       this.btnResetCrop.addEventListener('click', () => this.resetCropBox());
     }
-    if (this.btnAutoDetectCrop) {
-      this.btnAutoDetectCrop.addEventListener('click', () => this.autoDetectCropBox());
-    }
-    if (this.btnDetectSubject) {
-      this.btnDetectSubject.addEventListener('click', () => this.detectSubjectCropBox());
+    if (this.btnAutoDetect) {
+      this.btnAutoDetect.addEventListener('click', () => this.autoDetectSubject());
     }
     if (this.btnApplyCrop) {
       this.btnApplyCrop.addEventListener('click', () => this.applyCrop());
@@ -1256,26 +1251,92 @@ class ScannerApp {
     this.updateCropBoxDOM();
   }
 
-  detectSubjectCropBox() {
-    const box = ImageProcessor.detectSubject(this.cropCanvas);
-    if (box) {
-      this.cropState.boxX = box.x;
-      this.cropState.boxY = box.y;
-      this.cropState.boxW = box.w;
-      this.cropState.boxH = box.h;
-      this.updateCropBoxDOM();
-    } else {
-      this.showAlert('Could not detect a clear subject. Defaulting to Auto Detect Page.', false);
-      this.autoDetectCropBox();
+  autoDetectSubject() {
+    // Internally perform B&W Otsu thresholding on the current canvas
+    // to find the tightest bounding box of black (document) pixels,
+    // then update the crop box WITHOUT modifying the page image.
+    if (this.btnAutoDetect) {
+      this.btnAutoDetect.disabled = true;
+      this.btnAutoDetect.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Detecting...';
     }
+
+    setTimeout(() => {
+      try {
+        const canvas = this.cropCanvas;
+        const cW = canvas.width;
+        const cH = canvas.height;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const imgData = ctx.getImageData(0, 0, cW, cH);
+        const pixels = imgData.data;
+
+        // Step 1: Convert to grayscale
+        const gray = new Uint8Array(cW * cH);
+        const histogram = new Int32Array(256);
+        for (let i = 0; i < cW * cH; i++) {
+          const r = pixels[i * 4];
+          const g = pixels[i * 4 + 1];
+          const b = pixels[i * 4 + 2];
+          const v = (r * 77 + g * 150 + b * 29) >> 8;
+          gray[i] = v;
+          histogram[v]++;
+        }
+
+        // Step 2: Otsu's threshold
+        const total = cW * cH;
+        let sum = 0;
+        for (let t = 0; t < 256; t++) sum += t * histogram[t];
+        let sumB = 0, wB = 0, varMax = 0, threshold = 127;
+        for (let t = 0; t < 256; t++) {
+          wB += histogram[t];
+          if (wB === 0) continue;
+          const wF = total - wB;
+          if (wF === 0) break;
+          sumB += t * histogram[t];
+          const mB = sumB / wB;
+          const mF = (sum - sumB) / wF;
+          const varBetween = wB * wF * (mB - mF) * (mB - mF);
+          if (varBetween > varMax) { varMax = varBetween; threshold = t; }
+        }
+
+        // Step 3: Find bounding box of all pixels darker than threshold
+        let minX = cW, maxX = 0, minY = cH, maxY = 0, blackCount = 0;
+        for (let y = 0; y < cH; y++) {
+          for (let x = 0; x < cW; x++) {
+            if (gray[y * cW + x] < threshold) {
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+              blackCount++;
+            }
+          }
+        }
+
+        if (blackCount > 50 && minX < maxX && minY < maxY) {
+          const padding = 4;
+          this.cropState.boxX = Math.max(0, minX - padding);
+          this.cropState.boxY = Math.max(0, minY - padding);
+          this.cropState.boxW = Math.min(cW - this.cropState.boxX, (maxX - minX + 1) + padding * 2);
+          this.cropState.boxH = Math.min(cH - this.cropState.boxY, (maxY - minY + 1) + padding * 2);
+          this.updateCropBoxDOM();
+        } else {
+          // Fallback to page border detection
+          this.autoDetectCropBox();
+        }
+      } catch (e) {
+        console.warn('Auto detect error:', e);
+        this.autoDetectCropBox();
+      } finally {
+        if (this.btnAutoDetect) {
+          this.btnAutoDetect.disabled = false;
+          this.btnAutoDetect.innerHTML = '<i class="bi bi-stars me-1"></i>Auto Detect';
+        }
+      }
+    }, 10);
   }
 
   async openCropModal() {
     if (this.selectedIndex < 0 || this.selectedIndex >= this.pages.length) return;
-
-    if (this.chkSubjectBW) {
-      this.chkSubjectBW.checked = false;
-    }
 
     const page = this.pages[this.selectedIndex];
     const rotatedDataUrl = await ImageProcessor.getRotatedDataUrl(page.dataUrl, page.rotation);
@@ -1328,14 +1389,7 @@ class ScannerApp {
     const cropH = Math.round(this.cropState.boxH * scaleY);
 
     try {
-      let result;
-      const isBW = this.chkSubjectBW && this.chkSubjectBW.checked;
-
-      if (isBW) {
-        result = await ImageProcessor.processSubjectBW(rotatedDataUrl, cropX, cropY, cropW, cropH);
-      } else {
-        result = await ImageProcessor.cropDataUrl(rotatedDataUrl, cropX, cropY, cropW, cropH);
-      }
+      const result = await ImageProcessor.cropDataUrl(rotatedDataUrl, cropX, cropY, cropW, cropH);
 
       if (result && result.dataUrl) {
         this.saveHistoryState();
@@ -1343,10 +1397,6 @@ class ScannerApp {
         page.width = result.width;
         page.height = result.height;
         page.rotation = 0; // Reset rotation after baking into crop
-
-        if (this.chkSubjectBW) {
-          this.chkSubjectBW.checked = false;
-        }
 
         this.renderThumbnails();
         this.updatePreview();
