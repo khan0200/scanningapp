@@ -1751,20 +1751,19 @@ class ScannerApp {
 
   deletePage(index) {
     if (index >= 0 && index < this.pages.length) {
-      if (confirm(`Are you sure you want to delete Page ${index + 1}?`)) {
-        this.saveHistoryState();
-        this.pages.splice(index, 1);
-        if (this.selectedIndex === index) {
-          if (this.selectedIndex >= this.pages.length) {
-            this.selectedIndex = this.pages.length - 1;
-          }
-        } else if (this.selectedIndex > index) {
-          this.selectedIndex--;
+      this.saveHistoryState();
+      this.pages.splice(index, 1);
+      if (this.selectedIndex === index) {
+        if (this.selectedIndex >= this.pages.length) {
+          this.selectedIndex = this.pages.length - 1;
         }
-        this.renderThumbnails();
-        this.updateUI();
-        this.syncSession();
+      } else if (this.selectedIndex > index) {
+        this.selectedIndex--;
       }
+      this.renderThumbnails();
+      this.updateUI();
+      this.syncSession();
+      this.showAlert(`Page ${index + 1} deleted. Click Undo to restore.`, false);
     }
   }
 
@@ -1810,7 +1809,7 @@ class ScannerApp {
             </span>
           </div>
           <button class="btn btn-sm btn-link text-danger p-1 btn-delete-thumbnail" title="Delete Page" style="text-decoration: none;">
-            <i class="bi bi-trash fs-6"></i>
+            <i class="bi bi-trash fs-6" style="pointer-events: none;"></i>
           </button>
         </div>
       `;
