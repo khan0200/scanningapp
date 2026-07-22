@@ -12,6 +12,7 @@
   
   <!-- External CDN Libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
 
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🖨️</text></svg>">
@@ -140,7 +141,6 @@
           </ul>
         </div>
 
-
         <!-- Features Dropdown -->
         <div class="dropdown">
           <button class="btn btn-outline-primary btn-sm dropdown-toggle d-flex align-items-center gap-1" type="button" id="btnFeatures" data-bs-toggle="dropdown" aria-expanded="false" title="Page Features">
@@ -161,6 +161,15 @@
                 <i class="bi bi-crop text-primary"></i>
                 <span>Crop</span>
                 <small class="text-muted ms-auto">Trim page</small>
+              </button>
+            </li>
+            <li><hr class="dropdown-divider"></li>
+            <li><h6 class="dropdown-header small text-uppercase fw-bold">Page Operations</h6></li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnDuplicate" disabled>
+                <i class="bi bi-copy text-primary"></i>
+                <span>Duplicate Page</span>
+                <small class="text-muted ms-auto">Ctrl+D</small>
               </button>
             </li>
             <li><hr class="dropdown-divider"></li>
@@ -185,29 +194,53 @@
 
       <div class="vr mx-1 d-none d-md-block" style="height: 24px;"></div>
 
-      <!-- Export Actions -->
+      <!-- Export / Save Actions -->
       <div class="d-flex align-items-center gap-1 ms-auto">
 
         <!-- Export Dropdown -->
         <div class="dropdown">
           <button class="btn btn-success btn-sm fw-semibold dropdown-toggle d-flex align-items-center gap-1" type="button" id="btnExportMenu" data-bs-toggle="dropdown" aria-expanded="false" disabled>
-            <i class="bi bi-box-arrow-up"></i>
-            <span>Export</span>
+            <i class="bi bi-floppy"></i>
+            <span>Save</span>
           </button>
-          <ul class="dropdown-menu dropdown-menu-end shadow" aria-labelledby="btnExportMenu">
-            <li><h6 class="dropdown-header small text-uppercase fw-bold">Save As</h6></li>
+          <ul class="dropdown-menu dropdown-menu-end shadow" style="min-width: 230px;" aria-labelledby="btnExportMenu">
+            <li><h6 class="dropdown-header small text-uppercase fw-bold text-danger d-flex align-items-center gap-1"><i class="bi bi-file-earmark-pdf"></i> Save as PDF</h6></li>
             <li>
-              <button class="dropdown-item d-flex align-items-center gap-2" id="btnSavePdf" disabled>
-                <i class="bi bi-file-earmark-pdf text-danger"></i>
-                <span>Save PDF</span>
-                <small class="text-muted ms-auto">All pages</small>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnSavePdfCurrent" disabled>
+                <i class="bi bi-file-earmark-pdf"></i>
+                <span>Save Current page</span>
               </button>
             </li>
             <li>
-              <button class="dropdown-item d-flex align-items-center gap-2" id="btnSaveJpg" disabled>
-                <i class="bi bi-file-earmark-image text-success"></i>
-                <span>Save JPG</span>
-                <small class="text-muted ms-auto">Current page</small>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnSavePdfSelected" disabled>
+                <i class="bi bi-ui-checks"></i>
+                <span>Save selected</span>
+              </button>
+            </li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnSavePdfAll" disabled>
+                <i class="bi bi-files"></i>
+                <span>Save all</span>
+              </button>
+            </li>
+            <li><hr class="dropdown-divider"></li>
+            <li><h6 class="dropdown-header small text-uppercase fw-bold text-success d-flex align-items-center gap-1"><i class="bi bi-file-earmark-image"></i> Save as JPG</h6></li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnSaveJpgCurrent" disabled>
+                <i class="bi bi-file-earmark-image"></i>
+                <span>Save Current page</span>
+              </button>
+            </li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnSaveJpgSelected" disabled>
+                <i class="bi bi-ui-checks"></i>
+                <span>Save selected</span>
+              </button>
+            </li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnSaveJpgAll" disabled>
+                <i class="bi bi-images"></i>
+                <span>Save all</span>
               </button>
             </li>
           </ul>
@@ -234,16 +267,19 @@
   <div class="flex-grow-1 d-flex overflow-hidden">
     
     <!-- Left Sidebar: Pages List -->
-    <div class="col-md-3 col-lg-2 bg-body-tertiary border-end p-2 d-flex flex-column h-100">
+    <div class="col-md-4 col-lg-3 bg-body-tertiary border-end p-2 d-flex flex-column h-100">
       <div class="d-flex justify-content-between align-items-center mb-2 px-1">
-        <span class="fw-bold small text-secondary">PAGES</span>
+        <div class="form-check mb-0 d-flex align-items-center">
+          <input class="form-check-input me-1" type="checkbox" id="selectAllPages" title="Select / Deselect All Pages">
+          <label class="form-check-label fw-bold small text-secondary" for="selectAllPages" style="cursor: pointer;">PAGES</label>
+        </div>
         <span class="badge bg-secondary" id="thumbnailCount">0 items</span>
       </div>
       <div class="thumbnail-list flex-grow-1 overflow-auto pe-1" id="thumbnailList"></div>
     </div>
 
     <!-- Right Main Viewport Area -->
-    <div class="col-md-9 col-lg-10 bg-secondary-subtle d-flex flex-column align-items-center justify-content-center position-relative h-100 p-3">
+    <div class="col-md-8 col-lg-9 bg-secondary-subtle d-flex flex-column align-items-center justify-content-center position-relative h-100 p-3">
       
       <!-- Empty State -->
       <div class="card p-5 text-center shadow-sm border-0 bg-body" id="emptyState" style="max-width: 420px;">

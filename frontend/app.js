@@ -30,7 +30,7 @@ class ImageProcessor {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
 
-        if (rotation === 90 || rotation === 270) {
+        if (Math.abs(rotation) === 90 || Math.abs(rotation) === 270) {
           canvas.width = img.height;
           canvas.height = img.width;
         } else {
@@ -871,6 +871,7 @@ class ScannerApp {
   constructor() {
     this.pages = [];
     this.selectedIndex = -1;
+    this.selectedIndices = new Set();
     this.zoomScale = 1.0;
     this.sortable = null;
     this.scanners = [];
@@ -910,12 +911,18 @@ class ScannerApp {
     this.btnImportPdf = document.getElementById('btnImportPdf');
     this.btnDeskew = document.getElementById('btnDeskew');
     this.btnCrop = document.getElementById('btnCrop');
+    this.btnDuplicate = document.getElementById('btnDuplicate');
     this.btnRotateLeft = document.getElementById('btnRotateLeft');
     this.btnRotateRight = document.getElementById('btnRotateRight');
     this.btnDelete = document.getElementById('btnDelete');
     this.btnExportMenu = document.getElementById('btnExportMenu');
-    this.btnSavePdf = document.getElementById('btnSavePdf');
-    this.btnSaveJpg = document.getElementById('btnSaveJpg');
+    this.btnSavePdfCurrent = document.getElementById('btnSavePdfCurrent');
+    this.btnSavePdfSelected = document.getElementById('btnSavePdfSelected');
+    this.btnSavePdfAll = document.getElementById('btnSavePdfAll');
+    this.btnSaveJpgCurrent = document.getElementById('btnSaveJpgCurrent');
+    this.btnSaveJpgSelected = document.getElementById('btnSaveJpgSelected');
+    this.btnSaveJpgAll = document.getElementById('btnSaveJpgAll');
+    this.selectAllPages = document.getElementById('selectAllPages');
     this.btnClearAll = document.getElementById('btnClearAll');
 
     // Display & Viewport
@@ -1504,15 +1511,33 @@ class ScannerApp {
     if (this.btnCrop) {
       this.btnCrop.addEventListener('click', () => this.openCropModal());
     }
+    if (this.btnDuplicate) {
+      this.btnDuplicate.addEventListener('click', () => this.duplicateSelected());
+    }
     this.btnRotateLeft.addEventListener('click', () => this.rotateSelected(-90));
     this.btnRotateRight.addEventListener('click', () => this.rotateSelected(90));
     if (this.btnDelete) {
       this.btnDelete.addEventListener('click', () => this.deleteSelected());
     }
-    this.btnClearAll.addEventListener('click', () => this.clearAll());
+    if (this.btnSavePdfCurrent) this.btnSavePdfCurrent.addEventListener('click', () => this.exportPdf('current'));
+    if (this.btnSavePdfSelected) this.btnSavePdfSelected.addEventListener('click', () => this.exportPdf('selected'));
+    if (this.btnSavePdfAll) this.btnSavePdfAll.addEventListener('click', () => this.exportPdf('all'));
 
-    this.btnSavePdf.addEventListener('click', () => this.exportPdf());
-    this.btnSaveJpg.addEventListener('click', () => this.exportJpg());
+    if (this.btnSaveJpgCurrent) this.btnSaveJpgCurrent.addEventListener('click', () => this.exportJpg('current'));
+    if (this.btnSaveJpgSelected) this.btnSaveJpgSelected.addEventListener('click', () => this.exportJpg('selected'));
+    if (this.btnSaveJpgAll) this.btnSaveJpgAll.addEventListener('click', () => this.exportJpg('all'));
+
+    if (this.selectAllPages) {
+      this.selectAllPages.addEventListener('change', (e) => {
+        if (e.target.checked) {
+          this.pages.forEach((_, i) => this.selectedIndices.add(i));
+        } else {
+          this.selectedIndices.clear();
+        }
+        this.renderThumbnails();
+        this.updateUI();
+      });
+    }
 
     // Zoom events
     this.btnZoomIn.addEventListener('click', () => this.setZoom(this.zoomScale + 0.25));
@@ -1563,6 +1588,9 @@ class ScannerApp {
         } else if (key === 'y') {
           e.preventDefault();
           this.redo();
+        } else if (key === 'd') {
+          e.preventDefault();
+          this.duplicateSelected();
         }
       } else if (e.key === 'Delete' && this.selectedIndex >= 0 && !isInput) {
         this.deleteSelected();
@@ -1727,12 +1755,12 @@ class ScannerApp {
   }
 
   showAlert(msg, isError = true) {
-    this.alertText.textContent = msg;
-    if (isError) {
-      this.alertBanner.className = 'alert alert-danger alert-dismissible fade show mb-0 rounded-0';
-    } else {
-      this.alertBanner.className = 'alert alert-success alert-dismissible fade show mb-0 rounded-0';
+    if (!isError) {
+      // Suppress success notifications
+      return;
     }
+    this.alertText.textContent = msg;
+    this.alertBanner.className = 'alert alert-danger alert-dismissible fade show mb-0 rounded-0';
     this.alertBanner.classList.remove('hidden-input');
   }
 
@@ -1820,26 +1848,60 @@ class ScannerApp {
     }
   }
 
-  rotateSelected(delta) {
+  async rotateSelected(delta) {
     if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
       this.saveHistoryState();
       const page = this.pages[this.selectedIndex];
-      page.rotate(delta);
+      
+      this.btnRotateLeft.disabled = true;
+      this.btnRotateRight.disabled = true;
 
-      const activeCard = this.thumbnailList.children[this.selectedIndex];
-      if (activeCard) {
-        const thumbImg = activeCard.querySelector('.thumbnail-img');
-        const metaText = activeCard.querySelector('.thumbnail-meta-text');
-        if (thumbImg) thumbImg.style.transform = `rotate(${page.rotation}deg)`;
-        if (metaText) {
-          const w_mm = ((page.width / (page.dpi || 300)) * 25.4).toFixed(1);
-          const h_mm = ((page.height / (page.dpi || 300)) * 25.4).toFixed(1);
-          metaText.textContent = `${w_mm} × ${h_mm} mm ${page.rotation ? `(${page.rotation}°)` : ''}`;
+      try {
+        const rotatedDataUrl = await ImageProcessor.getRotatedDataUrl(page.dataUrl, delta);
+        page.dataUrl = rotatedDataUrl;
+
+        // Swap width and height for 90/270 deg rotation
+        if (delta === 90 || delta === -90 || delta === 270 || delta === -270) {
+          const temp = page.width;
+          page.width = page.height;
+          page.height = temp;
         }
-      }
 
-      this.updatePreview();
+        // Visual rotation is now baked into the image data
+        page.rotation = 0;
+
+        this.renderThumbnails();
+        this.updatePreview();
+        this.syncSession();
+      } catch (err) {
+        console.warn('Rotation error:', err);
+      } finally {
+        this.btnRotateLeft.disabled = false;
+        this.btnRotateRight.disabled = false;
+        this.updateUI();
+      }
+    }
+  }
+
+  duplicateSelected() {
+    if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
+      this.duplicatePage(this.selectedIndex);
+    }
+  }
+
+  duplicatePage(index) {
+    if (index >= 0 && index < this.pages.length) {
+      this.saveHistoryState();
+      const src = this.pages[index];
+      const copy = new DocumentPage(null, src.dataUrl, src.width, src.height, src.dpi);
+      copy.rotation = src.rotation || 0;
+      this.pages.splice(index + 1, 0, copy);
+      this.selectedIndices.clear();
+      this.selectedIndex = index + 1;
+      this.renderThumbnails();
+      this.updateUI();
       this.syncSession();
+      this.showAlert(`Page ${index + 1} duplicated.`, false);
     }
   }
 
@@ -1847,6 +1909,7 @@ class ScannerApp {
     if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
       this.saveHistoryState();
       this.pages.splice(this.selectedIndex, 1);
+      this.selectedIndices.clear();
       if (this.selectedIndex >= this.pages.length) {
         this.selectedIndex = this.pages.length - 1;
       }
@@ -1860,6 +1923,7 @@ class ScannerApp {
     if (index >= 0 && index < this.pages.length) {
       this.saveHistoryState();
       this.pages.splice(index, 1);
+      this.selectedIndices.clear();
       if (this.selectedIndex === index) {
         if (this.selectedIndex >= this.pages.length) {
           this.selectedIndex = this.pages.length - 1;
@@ -1880,6 +1944,7 @@ class ScannerApp {
       this.saveHistoryState();
       this.pages = [];
       this.selectedIndex = -1;
+      this.selectedIndices.clear();
       this.renderThumbnails();
       this.updateUI();
       this.clearSession();
@@ -1896,16 +1961,18 @@ class ScannerApp {
     this.thumbnailList.innerHTML = '';
 
     this.pages.forEach((page, idx) => {
+      const isChecked = this.selectedIndices.has(idx);
       const item = document.createElement('div');
       item.className = `card thumbnail-item mb-2 p-2 shadow-sm ${idx === this.selectedIndex ? 'active border-primary' : ''}`;
       item.addEventListener('click', () => this.selectPage(idx));
 
       item.innerHTML = `
         <div class="d-flex align-items-center gap-2 w-100">
+          <input type="checkbox" class="form-check-input page-checkbox m-0" data-index="${idx}" ${isChecked ? 'checked' : ''} title="Select page for saving" style="cursor: pointer;">
           <div class="thumbnail-drag-handle px-1" title="Drag to reorder">
             <i class="bi bi-grip-vertical fs-5"></i>
           </div>
-          <span class="badge ${idx === this.selectedIndex ? 'bg-primary' : 'bg-secondary'} rounded-circle p-2" style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 11px;">${idx + 1}</span>
+          <span class="badge ${idx === this.selectedIndex ? 'bg-primary' : 'bg-secondary'} rounded-circle p-2" style="width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; font-size: 10px;">${idx + 1}</span>
           <div class="thumbnail-img-box">
             <img class="thumbnail-img" src="${page.dataUrl}" style="transform: rotate(${page.rotation}deg)">
           </div>
@@ -1915,11 +1982,36 @@ class ScannerApp {
               ${((page.width / (page.dpi || 300)) * 25.4).toFixed(1)} × ${((page.height / (page.dpi || 300)) * 25.4).toFixed(1)} mm ${page.rotation ? `(${page.rotation}°)` : ''}
             </span>
           </div>
+          <button class="btn btn-sm btn-link text-primary p-1 btn-duplicate-thumbnail me-1" title="Duplicate Page" style="text-decoration: none;">
+            <i class="bi bi-copy fs-6" style="pointer-events: none;"></i>
+          </button>
           <button class="btn btn-sm btn-link text-danger p-1 btn-delete-thumbnail" title="Delete Page" style="text-decoration: none;">
             <i class="bi bi-trash fs-6" style="pointer-events: none;"></i>
           </button>
         </div>
       `;
+
+      const chk = item.querySelector('.page-checkbox');
+      if (chk) {
+        chk.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (chk.checked) {
+            this.selectedIndices.add(idx);
+          } else {
+            this.selectedIndices.delete(idx);
+          }
+          this.syncSelectAllCheckbox();
+          this.updateUI();
+        });
+      }
+
+      const dupBtn = item.querySelector('.btn-duplicate-thumbnail');
+      if (dupBtn) {
+        dupBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.duplicatePage(idx);
+        });
+      }
 
       const delBtn = item.querySelector('.btn-delete-thumbnail');
       if (delBtn) {
@@ -1932,8 +2024,26 @@ class ScannerApp {
       this.thumbnailList.appendChild(item);
     });
 
+    this.syncSelectAllCheckbox();
     this.thumbnailCount.textContent = `${this.pages.length} item${this.pages.length === 1 ? '' : 's'}`;
     this.pageCounter.textContent = `${this.pages.length} Page${this.pages.length === 1 ? '' : 's'}`;
+  }
+
+  syncSelectAllCheckbox() {
+    if (!this.selectAllPages) return;
+    if (this.pages.length === 0) {
+      this.selectAllPages.checked = false;
+      this.selectAllPages.indeterminate = false;
+    } else if (this.selectedIndices.size === this.pages.length) {
+      this.selectAllPages.checked = true;
+      this.selectAllPages.indeterminate = false;
+    } else if (this.selectedIndices.size > 0) {
+      this.selectAllPages.checked = false;
+      this.selectAllPages.indeterminate = true;
+    } else {
+      this.selectAllPages.checked = false;
+      this.selectAllPages.indeterminate = false;
+    }
   }
 
   updatePreview() {
@@ -1947,6 +2057,7 @@ class ScannerApp {
   updateUI() {
     const hasPages = this.pages.length > 0;
     const hasSelection = this.selectedIndex >= 0;
+    const hasCheckedOrSelected = this.selectedIndices.size > 0 || hasSelection;
 
     if (hasPages && hasSelection) {
       this.emptyState.classList.add('hidden-input');
@@ -1961,12 +2072,20 @@ class ScannerApp {
 
     if (this.btnDeskew) this.btnDeskew.disabled = !hasSelection;
     if (this.btnCrop) this.btnCrop.disabled = !hasSelection;
+    if (this.btnDuplicate) this.btnDuplicate.disabled = !hasSelection;
     this.btnRotateLeft.disabled = !hasSelection;
     this.btnRotateRight.disabled = !hasSelection;
     if (this.btnDelete) this.btnDelete.disabled = !hasSelection;
     if (this.btnExportMenu) this.btnExportMenu.disabled = !hasPages;
-    if (this.btnSavePdf) this.btnSavePdf.disabled = !hasPages;
-    if (this.btnSaveJpg) this.btnSaveJpg.disabled = !hasSelection;
+
+    if (this.btnSavePdfCurrent) this.btnSavePdfCurrent.disabled = !hasSelection;
+    if (this.btnSavePdfSelected) this.btnSavePdfSelected.disabled = !hasCheckedOrSelected;
+    if (this.btnSavePdfAll) this.btnSavePdfAll.disabled = !hasPages;
+
+    if (this.btnSaveJpgCurrent) this.btnSaveJpgCurrent.disabled = !hasSelection;
+    if (this.btnSaveJpgSelected) this.btnSaveJpgSelected.disabled = !hasCheckedOrSelected;
+    if (this.btnSaveJpgAll) this.btnSaveJpgAll.disabled = !hasPages;
+
     this.btnClearAll.disabled = !hasPages;
 
     this.updateUndoRedoUI();
@@ -1988,17 +2107,37 @@ class ScannerApp {
     this.fileInput.value = '';
   }
 
-  async exportPdf() {
+  async exportPdf(scope = 'all') {
     if (!this.pages.length) return;
+
+    let pagesToExport = [];
+    if (scope === 'current') {
+      if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
+        pagesToExport = [this.pages[this.selectedIndex]];
+      }
+    } else if (scope === 'selected') {
+      const indices = Array.from(this.selectedIndices).sort((a, b) => a - b);
+      if (indices.length > 0) {
+        pagesToExport = indices.map((i) => this.pages[i]).filter(Boolean);
+      } else if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
+        pagesToExport = [this.pages[this.selectedIndex]];
+      }
+    } else {
+      pagesToExport = [...this.pages];
+    }
+
+    if (!pagesToExport.length) {
+      this.showAlert('No pages selected to save as PDF.', true);
+      return;
+    }
 
     const { jsPDF } = window.jspdf;
     let pdf = null;
 
-    this.btnSavePdf.disabled = true;
-    this.btnSavePdf.textContent = 'Generating PDF...';
+    this.showAlert(`Generating PDF (${pagesToExport.length} page${pagesToExport.length === 1 ? '' : 's'})...`, false);
 
-    for (let i = 0; i < this.pages.length; i++) {
-      const page = this.pages[i];
+    for (let i = 0; i < pagesToExport.length; i++) {
+      const page = pagesToExport[i];
       const rotatedDataUrl = await ImageProcessor.getRotatedDataUrl(page.dataUrl, page.rotation);
 
       let imgW = page.width;
@@ -2023,26 +2162,89 @@ class ScannerApp {
       pdf.addImage(rotatedDataUrl, 'JPEG', 0, 0, imgW, imgH);
     }
 
-    pdf.save('Scanned_Document_' + new Date().toISOString().slice(0, 10) + '.pdf');
-
-    if (this.btnSavePdf) {
-      this.btnSavePdf.disabled = false;
-      this.btnSavePdf.innerHTML = `<i class="bi bi-file-earmark-pdf text-danger"></i> <span>Save PDF</span> <small class="text-muted ms-auto">All pages</small>`;
-    }
+    const suffix = scope === 'current' ? `_Page_${this.selectedIndex + 1}` : (scope === 'selected' ? '_Selected' : '_All');
+    pdf.save(`Scanned_Document${suffix}_${new Date().toISOString().slice(0, 10)}.pdf`);
+    this.showAlert(`PDF saved successfully (${pagesToExport.length} page${pagesToExport.length === 1 ? '' : 's'}).`, false);
   }
 
-  async exportJpg() {
-    if (this.selectedIndex < 0 || this.selectedIndex >= this.pages.length) return;
+  async exportJpg(scope = 'current') {
+    if (!this.pages.length) return;
 
-    const page = this.pages[this.selectedIndex];
-    const rotatedDataUrl = await ImageProcessor.getRotatedDataUrl(page.dataUrl, page.rotation);
+    let pagesToExport = [];
+    let pageIndices = [];
+    if (scope === 'current') {
+      if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
+        pagesToExport = [this.pages[this.selectedIndex]];
+        pageIndices = [this.selectedIndex];
+      }
+    } else if (scope === 'selected') {
+      const indices = Array.from(this.selectedIndices).sort((a, b) => a - b);
+      if (indices.length > 0) {
+        pageIndices = indices;
+        pagesToExport = indices.map((i) => this.pages[i]).filter(Boolean);
+      } else if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
+        pagesToExport = [this.pages[this.selectedIndex]];
+        pageIndices = [this.selectedIndex];
+      }
+    } else {
+      pagesToExport = [...this.pages];
+      pageIndices = this.pages.map((_, i) => i);
+    }
 
-    const a = document.createElement('a');
-    a.href = rotatedDataUrl;
-    a.download = `Scanned_Page_${this.selectedIndex + 1}.jpg`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    if (!pagesToExport.length) {
+      this.showAlert('No pages selected to save as JPG.', true);
+      return;
+    }
+
+    this.showAlert(`Preparing JPG export (${pagesToExport.length} page${pagesToExport.length === 1 ? '' : 's'})...`, false);
+
+    if (pagesToExport.length === 1) {
+      const page = pagesToExport[0];
+      const idx = pageIndices[0];
+      const rotatedDataUrl = await ImageProcessor.getRotatedDataUrl(page.dataUrl, page.rotation);
+
+      const a = document.createElement('a');
+      a.href = rotatedDataUrl;
+      a.download = `Scanned_Page_${idx + 1}.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      this.showAlert(`Page ${idx + 1} saved as JPG.`, false);
+    } else {
+      if (window.JSZip) {
+        const zip = new window.JSZip();
+        for (let i = 0; i < pagesToExport.length; i++) {
+          const page = pagesToExport[i];
+          const idx = pageIndices[i];
+          const rotatedDataUrl = await ImageProcessor.getRotatedDataUrl(page.dataUrl, page.rotation);
+          const base64Data = rotatedDataUrl.replace(/^data:image\/jpeg;base64,/, '');
+          zip.file(`Scanned_Page_${idx + 1}.jpg`, base64Data, { base64: true });
+        }
+        const content = await zip.generateAsync({ type: 'blob' });
+        const a = document.createElement('a');
+        const suffix = scope === 'selected' ? 'Selected' : 'All';
+        a.href = URL.createObjectURL(content);
+        a.download = `Scanned_Pages_${suffix}_${new Date().toISOString().slice(0, 10)}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        this.showAlert(`${pagesToExport.length} JPG pages saved as ZIP archive.`, false);
+      } else {
+        for (let i = 0; i < pagesToExport.length; i++) {
+          const page = pagesToExport[i];
+          const idx = pageIndices[i];
+          const rotatedDataUrl = await ImageProcessor.getRotatedDataUrl(page.dataUrl, page.rotation);
+          const a = document.createElement('a');
+          a.href = rotatedDataUrl;
+          a.download = `Scanned_Page_${idx + 1}.jpg`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        this.showAlert(`${pagesToExport.length} JPG files exported.`, false);
+      }
+    }
   }
 
   /**
