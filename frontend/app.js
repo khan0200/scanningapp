@@ -1298,26 +1298,83 @@ class ScannerApp {
           if (varBetween > varMax) { varMax = varBetween; threshold = t; }
         }
 
-        // Step 3: Find bounding box of all pixels darker than threshold
-        let minX = cW, maxX = 0, minY = cH, maxY = 0, blackCount = 0;
+        // Step 3: Build binary image (1 = dark/subject, 0 = light/background)
+        const binary = new Uint8Array(cW * cH);
+        for (let i = 0; i < cW * cH; i++) {
+          binary[i] = gray[i] < threshold ? 1 : 0;
+        }
+
+        // Step 4: Connected Component Labeling (union-find) to find the LARGEST black blob
+        const labels = new Int32Array(cW * cH);
+        const parent = [0];
+        let nextLabel = 1;
+
+        const find = (x) => {
+          while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+          return x;
+        };
+        const union = (a, b) => {
+          const ra = find(a), rb = find(b);
+          if (ra !== rb) parent[ra] = rb;
+        };
+
         for (let y = 0; y < cH; y++) {
           for (let x = 0; x < cW; x++) {
-            if (gray[y * cW + x] < threshold) {
-              if (x < minX) minX = x;
-              if (x > maxX) maxX = x;
-              if (y < minY) minY = y;
-              if (y > maxY) maxY = y;
-              blackCount++;
+            if (!binary[y * cW + x]) continue;
+            const left  = x > 0 ? labels[y * cW + (x - 1)] : 0;
+            const top   = y > 0 ? labels[(y - 1) * cW + x] : 0;
+            if (left === 0 && top === 0) {
+              labels[y * cW + x] = nextLabel;
+              parent[nextLabel] = nextLabel;
+              nextLabel++;
+            } else if (left !== 0 && top === 0) {
+              labels[y * cW + x] = left;
+            } else if (left === 0 && top !== 0) {
+              labels[y * cW + x] = top;
+            } else {
+              labels[y * cW + x] = left;
+              union(left, top);
             }
           }
         }
 
-        if (blackCount > 50 && minX < maxX && minY < maxY) {
-          const padding = 4;
-          this.cropState.boxX = Math.max(0, minX - padding);
-          this.cropState.boxY = Math.max(0, minY - padding);
-          this.cropState.boxW = Math.min(cW - this.cropState.boxX, (maxX - minX + 1) + padding * 2);
-          this.cropState.boxH = Math.min(cH - this.cropState.boxY, (maxY - minY + 1) + padding * 2);
+        // Step 5: Collect component stats
+        const comps = {}; // { root: { count, minX, maxX, minY, maxY } }
+        for (let y = 0; y < cH; y++) {
+          for (let x = 0; x < cW; x++) {
+            const l = labels[y * cW + x];
+            if (l === 0) continue;
+            const root = find(l);
+            if (!comps[root]) comps[root] = { count: 0, minX: cW, maxX: 0, minY: cH, maxY: 0 };
+            const c = comps[root];
+            c.count++;
+            if (x < c.minX) c.minX = x;
+            if (x > c.maxX) c.maxX = x;
+            if (y < c.minY) c.minY = y;
+            if (y > c.maxY) c.maxY = y;
+          }
+        }
+
+        // Step 6: Find the LARGEST component (by pixel count), ignoring components
+        // that fill the entire canvas (those are page background/shadow)
+        let best = null;
+        for (const root in comps) {
+          const c = comps[root];
+          const bW = c.maxX - c.minX + 1;
+          const bH = c.maxY - c.minY + 1;
+          // Reject components that span nearly the full canvas (backing paper shadow)
+          if (bW >= cW - 5 && bH >= cH - 5) continue;
+          // Reject tiny specks (less than 0.5% of canvas)
+          if (c.count < total * 0.005) continue;
+          if (!best || c.count > best.count) best = c;
+        }
+
+        if (best) {
+          const padding = 6;
+          this.cropState.boxX = Math.max(0, best.minX - padding);
+          this.cropState.boxY = Math.max(0, best.minY - padding);
+          this.cropState.boxW = Math.min(cW - this.cropState.boxX, (best.maxX - best.minX + 1) + padding * 2);
+          this.cropState.boxH = Math.min(cH - this.cropState.boxY, (best.maxY - best.minY + 1) + padding * 2);
           this.updateCropBoxDOM();
         } else {
           // Fallback to page border detection
