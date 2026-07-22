@@ -435,3 +435,13 @@ body {
 .hidden-input {
   display: none;
 }
+
+.center-progress-bar {
+  animation: centerScanPulse 1.6s infinite ease-in-out;
+}
+
+@keyframes centerScanPulse {
+  0% { left: -30%; width: 30%; }
+  50% { left: 35%; width: 45%; }
+  100% { left: 100%; width: 30%; }
+}

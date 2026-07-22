@@ -98,6 +98,11 @@ class ScannerApp {
     this.scanningBar = document.getElementById('scanningBar');
     this.fileInput = document.getElementById('fileInput');
 
+    // Overlay Modal elements
+    this.scanProgressOverlay = document.getElementById('scanProgressOverlay');
+    this.scanProgressSubtitle = document.getElementById('scanProgressSubtitle');
+    this.btnModalStopScan = document.getElementById('btnModalStopScan');
+
     // Alert Banner
     this.alertBanner = document.getElementById('alertBanner');
     this.alertText = document.getElementById('alertText');
@@ -130,6 +135,9 @@ class ScannerApp {
     this.btnRefreshScanners.addEventListener('click', () => this.loadScanners());
     this.btnScan.addEventListener('click', () => this.triggerHardwareScan());
     this.btnStopScan.addEventListener('click', () => this.abortScan());
+    if (this.btnModalStopScan) {
+      this.btnModalStopScan.addEventListener('click', () => this.abortScan());
+    }
     this.btnAddImage.addEventListener('click', () => this.fileInput.click());
     this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
 
@@ -221,6 +229,14 @@ class ScannerApp {
     this.btnScan.classList.add('hidden-input');
     this.btnStopScan.classList.remove('hidden-input');
 
+    const selectedName = this.scannerSelect.options[this.scannerSelect.selectedIndex]?.textContent || 'Canon G3410';
+    if (this.scanProgressSubtitle) {
+      this.scanProgressSubtitle.textContent = `Acquiring document from ${selectedName} (${this.dpiSelect.value} DPI ${this.colorSelect.value})...`;
+    }
+    if (this.scanProgressOverlay) {
+      this.scanProgressOverlay.classList.add('active');
+    }
+
     this.scanAbortController = new AbortController();
 
     const payload = {
@@ -277,6 +293,9 @@ class ScannerApp {
 
   resetScanUI() {
     this.scanningBar.style.display = 'none';
+    if (this.scanProgressOverlay) {
+      this.scanProgressOverlay.classList.remove('active');
+    }
     this.btnScan.classList.remove('hidden-input');
     this.btnStopScan.classList.add('hidden-input');
     this.btnScan.disabled = false;
