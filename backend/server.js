@@ -57,10 +57,13 @@ app.post('/scan', async (req, res) => {
     // 1. Try WIA First
     let result = await scanWia({ scannerId, dpi, colorMode, source, paperSize });
 
-    // 2. If WIA failed or returned no scanner, fallback to TWAIN
-    if (!result.success && !result.cancelled && (scannerId?.startsWith('twain:') || result.code === 'NO_SCANNER_CONNECTED')) {
-      console.log('[Scan] WIA unavailable or TWAIN requested. Trying TWAIN fallback...');
-      result = await scanTwain({ scannerId, dpi, colorMode, source, paperSize });
+    // 2. If WIA failed or returned no scanner, automatically try TWAIN fallback
+    if (!result.success && !result.cancelled) {
+      console.log('[Scan] WIA failed or unavailable. Attempting TWAIN fallback...');
+      const twainResult = await scanTwain({ scannerId, dpi, colorMode, source, paperSize });
+      if (twainResult.success) {
+        result = twainResult;
+      }
     }
 
     if (result.success) {
@@ -76,9 +79,9 @@ app.post('/scan', async (req, res) => {
         message: 'Scan cancelled by user.'
       });
     } else {
-      res.status(400).json({
+      res.json({
         success: false,
-        error: result.error || 'Failed to scan document. Check Canon G3410 printer connection.'
+        error: result.error || 'Failed to scan document. Make sure Canon PIXMA G3410 is powered on and connected via USB/Wi-Fi.'
       });
     }
   } catch (err) {

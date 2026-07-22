@@ -58,7 +58,7 @@ async function scanWia(params = {}) {
     const colorMode = params.colorMode || 'Color'; // Color, Grayscale, Black & White
     const source = params.source || 'Flatbed';     // Flatbed, ADF
     const paperSize = params.paperSize || 'A4';   // A4, Letter, Auto
-    const scannerId = (params.scannerId || '').replace('wia:', '');
+    const scannerId = (params.scannerId || '').replace('wia:', '').replace(/'/g, "''");
 
     // Map intent & parameters
     let intent = 1; // 1 = Color, 2 = Grayscale, 4 = Black & White (Text)
@@ -76,12 +76,14 @@ try {
     $devMgr = New-Object -ComObject WIA.DeviceManager
     $device = $null
 
-    $targetId = "${scannerId}"
+    $targetId = '${scannerId}'
     if ($targetId -ne "") {
         foreach ($info in $devMgr.DeviceInfos) {
             if ($info.DeviceID -eq $targetId) {
-                $device = $info.Connect()
-                break
+                try {
+                    $device = $info.Connect()
+                    break
+                } catch {}
             }
         }
     }
@@ -90,66 +92,90 @@ try {
         # Connect to default scanner
         foreach ($info in $devMgr.DeviceInfos) {
             if ($info.Type -eq 1) {
-                $device = $info.Connect()
-                break
+                try {
+                    $device = $info.Connect()
+                    break
+                } catch {}
             }
         }
     }
 
-    if ($null -eq $device) {
-        Write-Output "ERROR:NO_SCANNER_CONNECTED: No WIA scanner detected. Check Canon PIXMA G3410 USB/Wi-Fi connection."
-        exit
-    }
-
-    $item = $device.Items.Item(1)
-
-    # Configure DPI (Horizontal=6147, Vertical=6148)
-    try { $item.Properties.Item("6147").Value = ${dpi} } catch {}
-    try { $item.Properties.Item("6148").Value = ${dpi} } catch {}
-
-    # Configure Color Intent (DataType=4103 / Intent=6146)
-    try { $item.Properties.Item("6146").Value = ${intent} } catch {}
-
-    # Paper Source (Document Handling Select = 3088: 1=Flatbed, 2=Feeder)
-    if ("${source}" -eq "ADF") {
-        try { $device.Properties.Item("3088").Value = 2 } catch {}
-    } else {
-        try { $device.Properties.Item("3088").Value = 1 } catch {}
-    }
-
-    # Acquire image(s)
-    $wiaFormatJPEG = "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}"
     $dialog = New-Object -ComObject WIA.CommonDialog
 
-    $maxPages = if ("${source}" -eq "ADF") { 50 } else { 1 }
-    for ($i = 0; $i -lt $maxPages; $i++) {
+    if ($null -eq $device) {
+        # Fallback to WIA Interactive Scanner Dialog
         try {
-            $image = $item.Transfer($wiaFormatJPEG)
+            $image = $dialog.ShowAcquireImage(1, ${intent}, 0, "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}", $false, $false, $false)
             if ($null -ne $image) {
-                $outPath = [System.IO.Path]::Combine($tempDir, "page_$($i + 1).jpg")
+                $outPath = [System.IO.Path]::Combine($tempDir, "page_1.jpg")
                 $image.SaveFile($outPath)
                 $scannedFiles += $outPath
-                if ("${source}" -ne "ADF") { break }
             } else {
-                break
+                Write-Output "CANCELLED"
+                exit
             }
         } catch {
-            $hresult = $_.Exception.HResult
-            # 0x80210003 (-2145320957) is WIA_ERROR_PAPER_EMPTY
-            if ($hresult -eq -2145320957 -or $_.Exception.Message -like "*paper empty*") {
-                if ($scannedFiles.Count -gt 0) { break } # Finished ADF batch cleanly
-                Write-Output "ERROR:PAPER_EMPTY: Automatic Document Feeder is empty. Please load pages."
-                exit
-            } elseif ($hresult -eq -2145320954 -or $_.Exception.Message -like "*busy*") {
-                Write-Output "ERROR:DEVICE_BUSY: Canon G3410 scanner is currently busy in another application."
-                exit
-            } elseif ($hresult -eq -2145320938 -or $_.Exception.Message -like "*cover*") {
-                Write-Output "ERROR:COVER_OPEN: Scanner cover is open. Please close scanner lid."
-                exit
-            } else {
-                if ($scannedFiles.Count -gt 0) { break }
-                Write-Output ("ERROR:SCAN_FAILED: " + $_.Exception.Message)
-                exit
+            Write-Output "ERROR:NO_SCANNER_CONNECTED: No active WIA scanner detected. Make sure Canon PIXMA G3410 is turned on and connected via USB/Wi-Fi."
+            exit
+        }
+    } else {
+        $item = $device.Items.Item(1)
+
+        # Configure DPI (Horizontal=6147, Vertical=6148)
+        try { $item.Properties.Item("6147").Value = ${dpi} } catch {}
+        try { $item.Properties.Item("6148").Value = ${dpi} } catch {}
+
+        # Configure Color Intent (DataType=4103 / Intent=6146)
+        try { $item.Properties.Item("6146").Value = ${intent} } catch {}
+
+        # Paper Source (Document Handling Select = 3088: 1=Flatbed, 2=Feeder)
+        if ("${source}" -eq "ADF") {
+            try { $device.Properties.Item("3088").Value = 2 } catch {}
+        } else {
+            try { $device.Properties.Item("3088").Value = 1 } catch {}
+        }
+
+        # Acquire image(s)
+        $wiaFormatJPEG = "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}"
+        $maxPages = if ("${source}" -eq "ADF") { 50 } else { 1 }
+        for ($i = 0; $i -lt $maxPages; $i++) {
+            try {
+                $image = $item.Transfer($wiaFormatJPEG)
+                if ($null -ne $image) {
+                    $outPath = [System.IO.Path]::Combine($tempDir, "page_$($i + 1).jpg")
+                    $image.SaveFile($outPath)
+                    $scannedFiles += $outPath
+                    if ("${source}" -ne "ADF") { break }
+                } else {
+                    break
+                }
+            } catch {
+                $hresult = $_.Exception.HResult
+                if ($hresult -eq -2145320957 -or $_.Exception.Message -like "*paper empty*") {
+                    if ($scannedFiles.Count -gt 0) { break }
+                    Write-Output "ERROR:PAPER_EMPTY: Automatic Document Feeder is empty. Please load pages into Canon feeder."
+                    exit
+                } elseif ($hresult -eq -2145320954 -or $_.Exception.Message -like "*busy*") {
+                    Write-Output "ERROR:DEVICE_BUSY: Canon G3410 scanner is currently busy in another application."
+                    exit
+                } elseif ($hresult -eq -2145320938 -or $_.Exception.Message -like "*cover*") {
+                    Write-Output "ERROR:COVER_OPEN: Scanner cover is open. Please close scanner lid."
+                    exit
+                } else {
+                    if ($scannedFiles.Count -gt 0) { break }
+                    # Try CommonDialog fallback on transfer error
+                    try {
+                        $fallbackImg = $dialog.ShowAcquireImage(1, ${intent}, 0, $wiaFormatJPEG, $false, $false, $false)
+                        if ($null -ne $fallbackImg) {
+                            $outPath = [System.IO.Path]::Combine($tempDir, "page_1.jpg")
+                            $fallbackImg.SaveFile($outPath)
+                            $scannedFiles += $outPath
+                            break
+                        }
+                    } catch {}
+                    Write-Output ("ERROR:SCAN_FAILED: " + $_.Exception.Message)
+                    exit
+                }
             }
         }
     }
