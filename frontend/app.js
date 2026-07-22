@@ -3,12 +3,13 @@
  */
 
 class DocumentPage {
-  constructor(id, dataUrl, width, height) {
+  constructor(id, dataUrl, width, height, dpi) {
     this.id = id || 'page_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     this.dataUrl = dataUrl;
     this.width = width || 800;
     this.height = height || 1130;
     this.rotation = 0; // 0, 90, 180, 270 degrees
+    this.dpi = dpi || 300; // Default to 300 DPI
   }
 
   rotate(delta) {
@@ -642,7 +643,7 @@ class ScannerApp {
   createSnapshot() {
     return {
       pages: this.pages.map((p) => {
-        const page = new DocumentPage(p.id, p.dataUrl, p.width, p.height);
+        const page = new DocumentPage(p.id, p.dataUrl, p.width, p.height, p.dpi);
         page.rotation = p.rotation || 0;
         return page;
       }),
@@ -667,7 +668,7 @@ class ScannerApp {
 
     const previousState = this.historyStack.pop();
     this.pages = previousState.pages.map((p) => {
-      const page = new DocumentPage(p.id, p.dataUrl, p.width, p.height);
+      const page = new DocumentPage(p.id, p.dataUrl, p.width, p.height, p.dpi);
       page.rotation = p.rotation || 0;
       return page;
     });
@@ -690,7 +691,7 @@ class ScannerApp {
 
     const nextState = this.redoStack.pop();
     this.pages = nextState.pages.map((p) => {
-      const page = new DocumentPage(p.id, p.dataUrl, p.width, p.height);
+      const page = new DocumentPage(p.id, p.dataUrl, p.width, p.height, p.dpi);
       page.rotation = p.rotation || 0;
       return page;
     });
@@ -889,8 +890,12 @@ class ScannerApp {
     const realW = Math.round(this.cropState.boxW * scaleX);
     const realH = Math.round(this.cropState.boxH * scaleY);
 
+    const dpi = this.cropState.dpi || 300;
+    const realW_mm = ((realW / dpi) * 25.4).toFixed(1);
+    const realH_mm = ((realH / dpi) * 25.4).toFixed(1);
+
     if (this.cropDimensions) {
-      this.cropDimensions.textContent = `Selection: ${realW} × ${realH} px`;
+      this.cropDimensions.textContent = `Selection: ${realW_mm} × ${realH_mm} mm`;
     }
   }
 
@@ -937,6 +942,7 @@ class ScannerApp {
       this.cropState.imgH = img.height;
       this.cropState.canvasW = cW;
       this.cropState.canvasH = cH;
+      this.cropState.dpi = page.dpi || 300;
 
       this.autoDetectCropBox();
 
@@ -981,7 +987,9 @@ class ScannerApp {
           this.cropModalInstance.hide();
         }
 
-        this.showAlert(`Document cropped to ${result.width} × ${result.height} px`, false);
+        const w_mm = ((result.width / (page.dpi || 300)) * 25.4).toFixed(1);
+        const h_mm = ((result.height / (page.dpi || 300)) * 25.4).toFixed(1);
+        this.showAlert(`Document cropped to ${w_mm} × ${h_mm} mm`, false);
       }
     } catch (err) {
       console.warn('Crop error:', err);
@@ -1050,7 +1058,7 @@ class ScannerApp {
           this.saveHistoryState();
           imgFiles.forEach((file) => {
             const reader = new FileReader();
-            reader.onload = (event) => this.addPage(event.target.result, true);
+            reader.onload = (event) => this.addPage(event.target.result, true, 300);
             reader.readAsDataURL(file);
           });
         }
@@ -1130,7 +1138,7 @@ class ScannerApp {
       const data = await res.json();
       if (data.success && data.pages && data.pages.length > 0) {
         this.pages = data.pages.map((p) => {
-          const page = new DocumentPage(p.id, p.dataUrl, p.width, p.height);
+          const page = new DocumentPage(p.id, p.dataUrl, p.width, p.height, p.dpi);
           page.rotation = p.rotation || 0;
           return page;
         });
@@ -1202,7 +1210,7 @@ class ScannerApp {
 
       if (data.success && data.pages && data.pages.length > 0) {
         this.saveHistoryState();
-        data.pages.forEach((dataUrl) => this.addPage(dataUrl, true));
+        data.pages.forEach((dataUrl) => this.addPage(dataUrl, true, payload.dpi));
       } else if (data.cancelled) {
         // User cancelled scan dialog
       } else {
@@ -1256,13 +1264,13 @@ class ScannerApp {
     this.alertBanner.classList.add('hidden-input');
   }
 
-  addPage(dataUrl, skipHistory = false) {
+  addPage(dataUrl, skipHistory = false, dpi = null) {
     if (!skipHistory) {
       this.saveHistoryState();
     }
     const img = new Image();
     img.onload = () => {
-      const page = new DocumentPage(null, dataUrl, img.width, img.height);
+      const page = new DocumentPage(null, dataUrl, img.width, img.height, dpi);
       this.pages.push(page);
       this.selectedIndex = this.pages.length - 1;
       this.renderThumbnails();
@@ -1347,7 +1355,11 @@ class ScannerApp {
         const thumbImg = activeCard.querySelector('.thumbnail-img');
         const metaText = activeCard.querySelector('.thumbnail-meta-text');
         if (thumbImg) thumbImg.style.transform = `rotate(${page.rotation}deg)`;
-        if (metaText) metaText.textContent = `${page.width} × ${page.height} px ${page.rotation ? `(${page.rotation}°)` : ''}`;
+        if (metaText) {
+          const w_mm = ((page.width / (page.dpi || 300)) * 25.4).toFixed(1);
+          const h_mm = ((page.height / (page.dpi || 300)) * 25.4).toFixed(1);
+          metaText.textContent = `${w_mm} × ${h_mm} mm ${page.rotation ? `(${page.rotation}°)` : ''}`;
+        }
       }
 
       this.updatePreview();
@@ -1424,7 +1436,9 @@ class ScannerApp {
           </div>
           <div class="d-flex flex-column text-truncate" style="flex: 1;">
             <span class="fw-bold small text-dark">Page ${idx + 1}</span>
-            <span class="text-muted thumbnail-meta-text" style="font-size: 10px;">${page.width} × ${page.height} px ${page.rotation ? `(${page.rotation}°)` : ''}</span>
+            <span class="text-muted thumbnail-meta-text" style="font-size: 10px;">
+              ${((page.width / (page.dpi || 300)) * 25.4).toFixed(1)} × ${((page.height / (page.dpi || 300)) * 25.4).toFixed(1)} mm ${page.rotation ? `(${page.rotation}°)` : ''}
+            </span>
           </div>
           <button class="btn btn-sm btn-link text-danger p-1 btn-delete-thumbnail" title="Delete Page" style="text-decoration: none;">
             <i class="bi bi-trash fs-6"></i>
@@ -1491,7 +1505,7 @@ class ScannerApp {
     files.forEach((file) => {
       const reader = new FileReader();
       reader.onload = (event) => {
-        this.addPage(event.target.result, true);
+        this.addPage(event.target.result, true, 300);
       };
       reader.readAsDataURL(file);
     });
@@ -1620,7 +1634,7 @@ class ScannerApp {
         }).promise;
 
         const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-        this.addPage(dataUrl, true);
+        this.addPage(dataUrl, true, 150);
       }
 
       this.showAlert(`PDF imported — ${totalPages} page${totalPages === 1 ? '' : 's'} added.`, false);
