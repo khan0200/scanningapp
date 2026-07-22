@@ -356,9 +356,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 16px;
   overflow: auto;
   position: relative;
+  height: 100%;
+  width: 100%;
 }
 
 .preview-page-card {
@@ -370,15 +372,18 @@ body {
   align-items: center;
   justify-content: center;
   transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  max-width: 95%;
-  max-height: 95%;
+  max-width: 100%;
+  max-height: 100%;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .preview-img {
   display: block;
   max-width: 100%;
-  max-height: 100%;
+  max-height: calc(100vh - 120px);
+  width: auto;
+  height: auto;
   object-fit: contain;
   transform-origin: center center;
 }
