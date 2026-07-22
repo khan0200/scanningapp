@@ -4,6 +4,7 @@ const path = require('path');
 const { getWiaScanners, scanWia, abortWiaScan } = require('./services/wiaScanner');
 const { getTwainScanners, scanTwain } = require('./services/twainScanner');
 const { saveSession, loadSession, clearSession } = require('./services/sessionManager');
+const { hasNaps2, scanNaps2 } = require('./services/naps2Scanner');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -88,7 +89,22 @@ app.post('/scan', async (req, res) => {
 
   console.log(`[Scan Request] Scanner: ${scannerId}, DPI: ${dpi}, Mode: ${colorMode}, Source: ${source}, Paper: ${paperSize}`);
 
-  // Primary Scan Engine: Native C# WIA
+  // 1. High-Performance Scan Engine: NAPS2 (if available)
+  if (hasNaps2()) {
+    try {
+      console.log('[Scan] NAPS2 is installed. Executing scan via NAPS2.Console.exe...');
+      const napsResult = await scanNaps2({ scannerId, dpi, colorMode, source, paperSize });
+      if (napsResult && (napsResult.success || napsResult.cancelled)) {
+        return res.json(napsResult);
+      } else {
+        console.warn('[Scan] NAPS2 scan returned failure, falling back:', napsResult?.error);
+      }
+    } catch (err) {
+      console.warn('[Scan] NAPS2 scan failed to execute:', err.message);
+    }
+  }
+
+  // 2. Fallback 1: Native C# WIA
   try {
     const wiaResult = await scanWia({ scannerId, dpi, colorMode, source, paperSize });
     if (wiaResult && wiaResult.success && wiaResult.pages && wiaResult.pages.length > 0) {
