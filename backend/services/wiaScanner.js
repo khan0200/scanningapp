@@ -49,6 +49,17 @@ try {
   });
 }
 
+let activeChildProc = null;
+
+function abortWiaScan() {
+  if (activeChildProc) {
+    try {
+      exec(`taskkill /F /PID ${activeChildProc.pid} /T`);
+    } catch (e) {}
+    activeChildProc = null;
+  }
+}
+
 /**
  * Perform WIA Scan with specified parameters
  */
@@ -211,7 +222,8 @@ try {
     const encodedPs = Buffer.from(psScript, 'utf16le').toString('base64');
     const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encodedPs}`;
 
-    exec(cmd, { maxBuffer: 1024 * 1024 * 100 }, (error, stdout, stderr) => {
+    activeChildProc = exec(cmd, { maxBuffer: 1024 * 1024 * 100 }, (error, stdout, stderr) => {
+      activeChildProc = null;
       const output = stdout ? stdout.trim() : '';
 
       if (output.startsWith('CANCELLED')) {
@@ -244,5 +256,6 @@ try {
 
 module.exports = {
   getWiaScanners,
-  scanWia
+  scanWia,
+  abortWiaScan
 };

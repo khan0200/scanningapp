@@ -71,6 +71,7 @@ class ScannerApp {
     this.scannerSelect = document.getElementById('scannerSelect');
     this.btnRefreshScanners = document.getElementById('btnRefreshScanners');
     this.btnScan = document.getElementById('btnScan');
+    this.btnStopScan = document.getElementById('btnStopScan');
     this.dpiSelect = document.getElementById('dpiSelect');
     this.colorSelect = document.getElementById('colorSelect');
     this.sourceSelect = document.getElementById('sourceSelect');
@@ -128,6 +129,7 @@ class ScannerApp {
     // Toolbar events
     this.btnRefreshScanners.addEventListener('click', () => this.loadScanners());
     this.btnScan.addEventListener('click', () => this.triggerHardwareScan());
+    this.btnStopScan.addEventListener('click', () => this.abortScan());
     this.btnAddImage.addEventListener('click', () => this.fileInput.click());
     this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
 
@@ -216,7 +218,10 @@ class ScannerApp {
   async triggerHardwareScan() {
     this.hideAlert();
     this.scanningBar.style.display = 'block';
-    this.btnScan.disabled = true;
+    this.btnScan.classList.add('hidden-input');
+    this.btnStopScan.classList.remove('hidden-input');
+
+    this.scanAbortController = new AbortController();
 
     const payload = {
       scannerId: this.scannerSelect.value,
@@ -230,13 +235,13 @@ class ScannerApp {
       const res = await fetch(`${this.apiUrl}/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: this.scanAbortController.signal
       });
 
       const data = await res.json();
 
-      this.scanningBar.style.display = 'none';
-      this.btnScan.disabled = false;
+      this.resetScanUI();
 
       if (data.success && data.pages && data.pages.length > 0) {
         data.pages.forEach((dataUrl) => this.addPage(dataUrl));
@@ -247,10 +252,34 @@ class ScannerApp {
         this.showAlert(errorMsg, true);
       }
     } catch (err) {
-      this.scanningBar.style.display = 'none';
-      this.btnScan.disabled = false;
-      this.showAlert(`Scanner Communication Error: ${err.message}. Ensure backend server is running at http://localhost:3000.`, true);
+      this.resetScanUI();
+      if (err.name === 'AbortError') {
+        this.showAlert('Scan operation stopped by user.', false);
+      } else {
+        this.showAlert(`Scanner Communication Error: ${err.message}. Ensure backend server is running at http://localhost:3000.`, true);
+      }
     }
+  }
+
+  async abortScan() {
+    if (this.scanAbortController) {
+      this.scanAbortController.abort();
+    }
+
+    this.resetScanUI();
+
+    try {
+      await fetch(`${this.apiUrl}/scan/cancel`, { method: 'POST' });
+    } catch (e) {}
+
+    this.showAlert('Scan stopped by user.', false);
+  }
+
+  resetScanUI() {
+    this.scanningBar.style.display = 'none';
+    this.btnScan.classList.remove('hidden-input');
+    this.btnStopScan.classList.add('hidden-input');
+    this.btnScan.disabled = false;
   }
 
   showAlert(msg, isError = true) {

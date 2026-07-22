@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { getWiaScanners, scanWia } = require('./services/wiaScanner');
+const { getWiaScanners, scanWia, abortWiaScan } = require('./services/wiaScanner');
 const { getTwainScanners, scanTwain } = require('./services/twainScanner');
 
 const app = express();
@@ -91,6 +91,16 @@ app.post('/scan', async (req, res) => {
       error: 'Hardware scan failed: ' + err.message
     });
   }
+});
+
+/**
+ * POST /scan/cancel
+ * Aborts active scanner process
+ */
+app.post('/scan/cancel', (req, res) => {
+  console.log('[Scan Cancel] Received scan abort request...');
+  abortWiaScan();
+  res.json({ success: true, message: 'Scan operation aborted.' });
 });
 
 // Start Server
