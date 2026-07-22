@@ -221,6 +221,316 @@ class ImageProcessor {
     });
   }
 
+  static detectSubject(canvas) {
+    const origW = canvas.width;
+    const origH = canvas.height;
+
+    const maxDim = 400;
+    let w = origW;
+    let h = origH;
+    if (w > maxDim || h > maxDim) {
+      if (w > h) {
+        h = Math.round((h * maxDim) / w);
+        w = maxDim;
+      } else {
+        w = Math.round((w * maxDim) / h);
+        h = maxDim;
+      }
+    }
+
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = w;
+    tempCanvas.height = h;
+    const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+    tempCtx.drawImage(canvas, 0, 0, w, h);
+
+    const imgData = tempCtx.getImageData(0, 0, w, h);
+    const pixels = imgData.data;
+
+    const gray = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const r = pixels[i * 4];
+      const g = pixels[i * 4 + 1];
+      const b = pixels[i * 4 + 2];
+      gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
+    }
+
+    const G = new Float32Array(w * h);
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const gx =
+          -gray[(y - 1) * w + (x - 1)] - 2 * gray[y * w + (x - 1)] - gray[(y + 1) * w + (x - 1)] +
+           gray[(y - 1) * w + (x + 1)] + 2 * gray[y * w + (x + 1)] + gray[(y + 1) * w + (x + 1)];
+        const gy =
+          -gray[(y - 1) * w + (x - 1)] - 2 * gray[(y - 1) * w + x] - gray[(y - 1) * w + (x + 1)] +
+           gray[(y + 1) * w + (x - 1)] + 2 * gray[(y + 1) * w + x] + gray[(y + 1) * w + (x + 1)];
+        G[y * w + x] = Math.sqrt(gx * gx + gy * gy);
+      }
+    }
+
+    const binaryEdges = new Uint8Array(w * h);
+    const EDGE_THRESH = 20;
+    for (let i = 0; i < w * h; i++) {
+      binaryEdges[i] = G[i] > EDGE_THRESH ? 255 : 0;
+    }
+
+    const r = 10;
+    const integral = new Uint32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      let rowSum = 0;
+      for (let x = 0; x < w; x++) {
+        rowSum += binaryEdges[y * w + x];
+        integral[y * w + x] = (y === 0) ? rowSum : (integral[(y - 1) * w + x] + rowSum);
+      }
+    }
+
+    const denseEdges = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const x1 = Math.max(0, x - r);
+        const y1 = Math.max(0, y - r);
+        const x2 = Math.min(w - 1, x + r);
+        const y2 = Math.min(h - 1, y + r);
+        const count = (x2 - x1 + 1) * (y2 - y1 + 1);
+        let sum = integral[y2 * w + x2];
+        if (x1 > 0) sum -= integral[y2 * w + (x1 - 1)];
+        if (y1 > 0) sum -= integral[(y1 - 1) * w + x2];
+        if (x1 > 0 && y1 > 0) sum += integral[(y1 - 1) * w + (x1 - 1)];
+
+        const density = (sum / 255) / count;
+        denseEdges[y * w + x] = density > 0.08 ? 255 : 0;
+      }
+    }
+
+    const labels = new Int32Array(w * h);
+    let nextLabel = 1;
+    const parent = [0];
+    const find = (i) => {
+      let root = i;
+      while (parent[root] !== root) root = parent[root];
+      let curr = i;
+      while (curr !== root) {
+        let nxt = parent[curr];
+        parent[curr] = root;
+        curr = nxt;
+      }
+      return root;
+    };
+    const union = (i, j) => {
+      const rI = find(i);
+      const rJ = find(j);
+      if (rI !== rJ) parent[rI] = rJ;
+    };
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (denseEdges[y * w + x] === 255) {
+          const left = (x > 0) ? labels[y * w + (x - 1)] : 0;
+          const top = (y > 0) ? labels[(y - 1) * w + x] : 0;
+
+          if (left === 0 && top === 0) {
+            labels[y * w + x] = nextLabel;
+            parent[nextLabel] = nextLabel;
+            nextLabel++;
+          } else if (left !== 0 && top === 0) {
+            labels[y * w + x] = left;
+          } else if (left === 0 && top !== 0) {
+            labels[y * w + x] = top;
+          } else {
+            labels[y * w + x] = Math.min(left, top);
+            if (left !== top) union(left, top);
+          }
+        }
+      }
+    }
+
+    const components = {};
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const l = labels[y * w + x];
+        if (l !== 0) {
+          const rL = find(l);
+          labels[y * w + x] = rL;
+          if (!components[rL]) {
+            components[rL] = { minX: x, maxX: x, minY: y, maxY: y, count: 0 };
+          }
+          const c = components[rL];
+          c.count++;
+          if (x < c.minX) c.minX = x;
+          if (x > c.maxX) c.maxX = x;
+          if (y < c.minY) c.minY = y;
+          if (y > c.maxY) c.maxY = y;
+        }
+      }
+    }
+
+    let bestComp = null;
+    let bestScore = -1;
+    const totalArea = w * h;
+
+    for (const label in components) {
+      const c = components[label];
+      const compW = c.maxX - c.minX + 1;
+      const compH = c.maxY - c.minY + 1;
+
+      if (c.count < totalArea * 0.005) continue;
+      if (compW >= w - 10 && compH >= h - 10) continue;
+
+      let score = c.count;
+      const ratio = compW / compH;
+      if (ratio > 0.3 && ratio < 3.5) {
+        score *= 1.5;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestComp = c;
+      }
+    }
+
+    if (!bestComp) return null;
+
+    const scaleX = origW / w;
+    const scaleY = origH / h;
+
+    let finalMinX = Math.round(bestComp.minX * scaleX);
+    let finalMaxX = Math.round((bestComp.maxX + 1) * scaleX);
+    let finalMinY = Math.round(bestComp.minY * scaleY);
+    let finalMaxY = Math.round((bestComp.maxY + 1) * scaleY);
+
+    const padding = 10;
+    finalMinX = Math.max(0, finalMinX - padding);
+    finalMaxX = Math.min(origW - 1, finalMaxX + padding);
+    finalMinY = Math.max(0, finalMinY - padding);
+    finalMaxY = Math.min(origH - 1, finalMaxY + padding);
+
+    return {
+      x: finalMinX,
+      y: finalMinY,
+      w: finalMaxX - finalMinX,
+      h: finalMaxY - finalMinY
+    };
+  }
+
+  static processSubjectBW(dataUrl, cropX, cropY, cropW, cropH) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = cropW;
+        cropCanvas.height = cropH;
+        const cropCtx = cropCanvas.getContext('2d');
+        cropCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+        const imgData = cropCtx.getImageData(0, 0, cropW, cropH);
+        const pixels = imgData.data;
+
+        const gray = new Uint8Array(cropW * cropH);
+        const histogram = new Int32Array(256);
+        for (let i = 0; i < cropW * cropH; i++) {
+          const r = pixels[i * 4];
+          const g = pixels[i * 4 + 1];
+          const b = pixels[i * 4 + 2];
+          const val = (r * 77 + g * 150 + b * 29) >> 8;
+          gray[i] = val;
+          histogram[val]++;
+        }
+
+        let total = cropW * cropH;
+        let sum = 0;
+        for (let t = 0; t < 256; t++) sum += t * histogram[t];
+
+        let sumB = 0;
+        let wB = 0;
+        let wF = 0;
+        let varMax = 0;
+        let threshold = 127;
+
+        for (let t = 0; t < 256; t++) {
+          wB += histogram[t];
+          if (wB === 0) continue;
+          wF = total - wB;
+          if (wF === 0) break;
+
+          sumB += t * histogram[t];
+          let mB = sumB / wB;
+          let mF = (sum - sumB) / wF;
+
+          let varBetween = wB * wF * (mB - mF) * (mB - mF);
+          if (varBetween > varMax) {
+            varMax = varBetween;
+            threshold = t;
+          }
+        }
+
+        let minBlackX = cropW;
+        let maxBlackX = 0;
+        let minBlackY = cropH;
+        let maxBlackY = 0;
+        let blackCount = 0;
+
+        for (let y = 0; y < cropH; y++) {
+          for (let x = 0; x < cropW; x++) {
+            const idx = y * cropW + x;
+            const isBlack = gray[idx] < threshold;
+            const pIdx = idx * 4;
+
+            if (isBlack) {
+              pixels[pIdx] = 0;
+              pixels[pIdx + 1] = 0;
+              pixels[pIdx + 2] = 0;
+              if (x < minBlackX) minBlackX = x;
+              if (x > maxBlackX) maxBlackX = x;
+              if (y < minBlackY) minBlackY = y;
+              if (y > maxBlackY) maxBlackY = y;
+              blackCount++;
+            } else {
+              pixels[pIdx] = 255;
+              pixels[pIdx + 1] = 255;
+              pixels[pIdx + 2] = 255;
+            }
+            pixels[pIdx + 3] = 255;
+          }
+        }
+
+        cropCtx.putImageData(imgData, 0, 0);
+
+        if (blackCount > 100 && minBlackX < maxBlackX && minBlackY < maxBlackY) {
+          const padding = 3;
+          const tightX = Math.max(0, minBlackX - padding);
+          const tightY = Math.max(0, minBlackY - padding);
+          const tightW = Math.min(cropW - tightX, (maxBlackX - minBlackX + 1) + padding * 2);
+          const tightH = Math.min(cropH - tightY, (maxBlackY - minBlackY + 1) + padding * 2);
+
+          const finalCanvas = document.createElement('canvas');
+          finalCanvas.width = tightW;
+          finalCanvas.height = tightH;
+          const finalCtx = finalCanvas.getContext('2d');
+          finalCtx.drawImage(cropCanvas, tightX, tightY, tightW, tightH, 0, 0, tightW, tightH);
+
+          resolve({
+            dataUrl: finalCanvas.toDataURL('image/jpeg', 0.90),
+            width: tightW,
+            height: tightH
+          });
+        } else {
+          resolve({
+            dataUrl: cropCanvas.toDataURL('image/jpeg', 0.90),
+            width: cropW,
+            height: cropH
+          });
+        }
+      };
+      img.src = dataUrl;
+    });
+  }
+
   static detectBorders(canvas) {
     const origW = canvas.width;
     const origH = canvas.height;
@@ -606,6 +916,8 @@ class ScannerApp {
     this.cropBox = document.getElementById('cropBox');
     this.cropDimensions = document.getElementById('cropDimensions');
     this.btnAutoDetectCrop = document.getElementById('btnAutoDetectCrop');
+    this.btnDetectSubject = document.getElementById('btnDetectSubject');
+    this.chkSubjectBW = document.getElementById('chkSubjectBW');
     this.btnResetCrop = document.getElementById('btnResetCrop');
     this.btnApplyCrop = document.getElementById('btnApplyCrop');
 
@@ -873,6 +1185,9 @@ class ScannerApp {
     if (this.btnAutoDetectCrop) {
       this.btnAutoDetectCrop.addEventListener('click', () => this.autoDetectCropBox());
     }
+    if (this.btnDetectSubject) {
+      this.btnDetectSubject.addEventListener('click', () => this.detectSubjectCropBox());
+    }
     if (this.btnApplyCrop) {
       this.btnApplyCrop.addEventListener('click', () => this.applyCrop());
     }
@@ -917,8 +1232,26 @@ class ScannerApp {
     this.updateCropBoxDOM();
   }
 
+  detectSubjectCropBox() {
+    const box = ImageProcessor.detectSubject(this.cropCanvas);
+    if (box) {
+      this.cropState.boxX = box.x;
+      this.cropState.boxY = box.y;
+      this.cropState.boxW = box.w;
+      this.cropState.boxH = box.h;
+      this.updateCropBoxDOM();
+    } else {
+      this.showAlert('Could not detect a clear subject. Defaulting to Auto Detect Page.', false);
+      this.autoDetectCropBox();
+    }
+  }
+
   async openCropModal() {
     if (this.selectedIndex < 0 || this.selectedIndex >= this.pages.length) return;
+
+    if (this.chkSubjectBW) {
+      this.chkSubjectBW.checked = false;
+    }
 
     const page = this.pages[this.selectedIndex];
     const rotatedDataUrl = await ImageProcessor.getRotatedDataUrl(page.dataUrl, page.rotation);
@@ -971,13 +1304,25 @@ class ScannerApp {
     const cropH = Math.round(this.cropState.boxH * scaleY);
 
     try {
-      const result = await ImageProcessor.cropDataUrl(rotatedDataUrl, cropX, cropY, cropW, cropH);
+      let result;
+      const isBW = this.chkSubjectBW && this.chkSubjectBW.checked;
+
+      if (isBW) {
+        result = await ImageProcessor.processSubjectBW(rotatedDataUrl, cropX, cropY, cropW, cropH);
+      } else {
+        result = await ImageProcessor.cropDataUrl(rotatedDataUrl, cropX, cropY, cropW, cropH);
+      }
+
       if (result && result.dataUrl) {
         this.saveHistoryState();
         page.dataUrl = result.dataUrl;
         page.width = result.width;
         page.height = result.height;
         page.rotation = 0; // Reset rotation after baking into crop
+
+        if (this.chkSubjectBW) {
+          this.chkSubjectBW.checked = false;
+        }
 
         this.renderThumbnails();
         this.updatePreview();
