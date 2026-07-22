@@ -48,14 +48,14 @@ class ImageProcessor {
   }
 
   /**
-   * Automatic Document Deskew / Straighten Algorithm
+   * Automatic Document Deskew / Straighten Algorithm (Sobel Edge + Radon Projection)
    */
   static deskewDataUrl(dataUrl) {
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
-        const maxDim = 600;
-        let scale = Math.min(1.0, maxDim / Math.max(img.width, img.height));
+        const maxDim = 800;
+        const scale = Math.min(1.0, maxDim / Math.max(img.width, img.height));
         const w = Math.round(img.width * scale);
         const h = Math.round(img.height * scale);
 
@@ -68,25 +68,35 @@ class ImageProcessor {
         const imgData = ctx.getImageData(0, 0, w, h);
         const pixels = imgData.data;
 
-        const bw = new Uint8Array(w * h);
-        for (let i = 0; i < pixels.length; i += 4) {
-          const lum = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
-          bw[i / 4] = lum < 180 ? 1 : 0;
+        // Sobel Horizontal Edge Filter (detects printed text row boundaries)
+        const edges = new Uint8Array(w * h);
+        for (let y = 1; y < h - 1; y += 2) {
+          for (let x = 1; x < w - 1; x += 2) {
+            const idxAbove = ((y - 1) * w + x) * 4;
+            const idxBelow = ((y + 1) * w + x) * 4;
+
+            const lumAbove = 0.299 * pixels[idxAbove] + 0.587 * pixels[idxAbove + 1] + 0.114 * pixels[idxAbove + 2];
+            const lumBelow = 0.299 * pixels[idxBelow] + 0.587 * pixels[idxBelow + 1] + 0.114 * pixels[idxBelow + 2];
+
+            const gy = Math.abs(lumBelow - lumAbove);
+            edges[y * w + x] = gy > 25 ? 1 : 0;
+          }
         }
 
+        // Radon Projection Profile Variance across -15° to +15° in 0.25° steps
         let maxVariance = -1;
         let bestAngle = 0;
 
-        for (let angle = -10; angle <= 10; angle += 0.5) {
+        for (let angle = -15.0; angle <= 15.0; angle += 0.25) {
           const rad = (angle * Math.PI) / 180;
           const cos = Math.cos(rad);
           const sin = Math.sin(rad);
 
           const profile = new Float32Array(h);
 
-          for (let y = 0; y < h; y += 2) {
-            for (let x = 0; x < w; x += 2) {
-              if (bw[y * w + x]) {
+          for (let y = 4; y < h - 4; y += 3) {
+            for (let x = 4; x < w - 4; x += 3) {
+              if (edges[y * w + x]) {
                 const rotY = Math.round(-x * sin + y * cos);
                 if (rotY >= 0 && rotY < h) {
                   profile[rotY]++;
@@ -111,11 +121,6 @@ class ImageProcessor {
           }
         }
 
-        if (Math.abs(bestAngle) < 0.2) {
-          resolve({ dataUrl, width: img.width, height: img.height, angle: 0 });
-          return;
-        }
-
         const rad = (-bestAngle * Math.PI) / 180;
         const absCos = Math.abs(Math.cos(rad));
         const absSin = Math.abs(Math.sin(rad));
@@ -136,7 +141,7 @@ class ImageProcessor {
         rotCtx.drawImage(img, -img.width / 2, -img.height / 2);
 
         resolve({
-          dataUrl: rotCanvas.toDataURL('image/jpeg', 0.92),
+          dataUrl: rotCanvas.toDataURL('image/jpeg', 0.94),
           width: rotW,
           height: rotH,
           angle: -bestAngle
