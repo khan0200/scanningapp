@@ -373,8 +373,26 @@ class ScannerApp {
 
   selectPage(index) {
     if (index >= 0 && index < this.pages.length) {
+      if (this.selectedIndex >= 0 && this.thumbnailList.children[this.selectedIndex]) {
+        this.thumbnailList.children[this.selectedIndex].classList.remove('active', 'border-primary');
+        const oldBadge = this.thumbnailList.children[this.selectedIndex].querySelector('.badge');
+        if (oldBadge) {
+          oldBadge.classList.remove('bg-primary');
+          oldBadge.classList.add('bg-secondary');
+        }
+      }
+
       this.selectedIndex = index;
-      this.renderThumbnails();
+
+      if (this.thumbnailList.children[this.selectedIndex]) {
+        this.thumbnailList.children[this.selectedIndex].classList.add('active', 'border-primary');
+        const newBadge = this.thumbnailList.children[this.selectedIndex].querySelector('.badge');
+        if (newBadge) {
+          newBadge.classList.remove('bg-secondary');
+          newBadge.classList.add('bg-primary');
+        }
+      }
+
       this.updatePreview();
       this.updateUI();
     }
@@ -384,7 +402,16 @@ class ScannerApp {
     if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
       const page = this.pages[this.selectedIndex];
       page.rotate(delta);
-      this.renderThumbnails();
+
+      // Fast, zero-flicker in-place CSS rotation
+      const activeCard = this.thumbnailList.children[this.selectedIndex];
+      if (activeCard) {
+        const thumbImg = activeCard.querySelector('.thumbnail-img');
+        const metaText = activeCard.querySelector('.thumbnail-meta-text');
+        if (thumbImg) thumbImg.style.transform = `rotate(${page.rotation}deg)`;
+        if (metaText) metaText.textContent = `${page.width} × ${page.height} px ${page.rotation ? `(${page.rotation}°)` : ''}`;
+      }
+
       this.updatePreview();
       this.syncSession(); // Background cache rotated page to temp folder
     }
@@ -438,7 +465,7 @@ class ScannerApp {
           </div>
           <div class="d-flex flex-column text-truncate">
             <span class="fw-bold small text-dark">Page ${idx + 1}</span>
-            <span class="text-muted" style="font-size: 10px;">${page.width} × ${page.height} px ${page.rotation ? `(${page.rotation}°)` : ''}</span>
+            <span class="text-muted thumbnail-meta-text" style="font-size: 10px;">${page.width} × ${page.height} px ${page.rotation ? `(${page.rotation}°)` : ''}</span>
           </div>
         </div>
       `;
