@@ -215,9 +215,121 @@ class ImageProcessor {
           width: cropW,
           height: cropH
         });
-      };
-      img.src = dataUrl;
-    });
+  }
+
+  /**
+   * Automatic Document Border Detection (Color Deviation Projection Profile)
+   */
+  static detectBorders(canvas) {
+    const w = canvas.width;
+    const h = canvas.height;
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const pixels = imgData.data;
+
+    // 1. Sample corners to estimate background color (mean RGB)
+    const sampleSize = 8;
+    let rSum = 0, gSum = 0, bSum = 0, count = 0;
+    const corners = [
+      { x: 2, y: 2 },
+      { x: w - 2 - sampleSize, y: 2 },
+      { x: 2, y: h - 2 - sampleSize },
+      { x: w - 2 - sampleSize, y: h - 2 - sampleSize }
+    ];
+    for (const corner of corners) {
+      for (let cy = 0; cy < sampleSize; cy++) {
+        for (let cx = 0; cx < sampleSize; cx++) {
+          const px = corner.x + cx;
+          const py = corner.y + cy;
+          if (px >= 0 && px < w && py >= 0 && py < h) {
+            const idx = (py * w + px) * 4;
+            rSum += pixels[idx];
+            gSum += pixels[idx + 1];
+            bSum += pixels[idx + 2];
+            count++;
+          }
+        }
+      }
+    }
+    const bgR = count > 0 ? rSum / count : 255;
+    const bgG = count > 0 ? gSum / count : 255;
+    const bgB = count > 0 ? bSum / count : 255;
+
+    // 2. Count deviations per row/column
+    const devX = new Int32Array(w);
+    const devY = new Int32Array(h);
+    const COLOR_DIST_THRESHOLD = 20;
+
+    for (let y = 2; y < h - 2; y++) {
+      for (let x = 2; x < w - 2; x++) {
+        const idx = (y * w + x) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        const dist = Math.sqrt((r - bgR) ** 2 + (g - bgG) ** 2 + (b - bgB) ** 2);
+        
+        if (dist > COLOR_DIST_THRESHOLD) {
+          devX[x]++;
+          devY[y]++;
+        }
+      }
+    }
+
+    // Find boundaries: where row/column has significant deviation (at least 1.5% of pixels deviate)
+    let minX = 0, maxX = w - 1;
+    let minY = 0, maxY = h - 1;
+
+    const thresholdX = Math.max(2, Math.round(h * 0.015));
+    const thresholdY = Math.max(2, Math.round(w * 0.015));
+
+    // Find minX
+    for (let x = 0; x < w; x++) {
+      if (devX[x] > thresholdX) {
+        minX = x;
+        break;
+      }
+    }
+
+    // Find maxX
+    for (let x = w - 1; x >= 0; x--) {
+      if (devX[x] > thresholdX) {
+        maxX = x;
+        break;
+      }
+    }
+
+    // Find minY
+    for (let y = 0; y < h; y++) {
+      if (devY[y] > thresholdY) {
+        minY = y;
+        break;
+      }
+    }
+
+    // Find maxY
+    for (let y = h - 1; y >= 0; y--) {
+      if (devY[y] > thresholdY) {
+        maxY = y;
+        break;
+      }
+    }
+
+    // Add padding to avoid cutoffs
+    const pad = 6;
+    minX = Math.max(0, minX - pad);
+    maxX = Math.min(w - 1, maxX + pad);
+    minY = Math.max(0, minY - pad);
+    maxY = Math.min(h - 1, maxY + pad);
+
+    const boxW = maxX - minX;
+    const boxH = maxY - minY;
+
+    if (boxW < 40 || boxH < 40) {
+      // Fallback to margins if detection fails
+      return { x: 10, y: 10, w: w - 20, h: h - 20 };
+    }
+
+    return { x: minX, y: minY, w: boxW, h: boxH };
   }
 }
 
@@ -293,6 +405,7 @@ class ScannerApp {
     this.cropCanvas = document.getElementById('cropCanvas');
     this.cropBox = document.getElementById('cropBox');
     this.cropDimensions = document.getElementById('cropDimensions');
+    this.btnAutoDetectCrop = document.getElementById('btnAutoDetectCrop');
     this.btnResetCrop = document.getElementById('btnResetCrop');
     this.btnApplyCrop = document.getElementById('btnApplyCrop');
 
@@ -557,6 +670,9 @@ class ScannerApp {
     if (this.btnResetCrop) {
       this.btnResetCrop.addEventListener('click', () => this.resetCropBox());
     }
+    if (this.btnAutoDetectCrop) {
+      this.btnAutoDetectCrop.addEventListener('click', () => this.autoDetectCropBox());
+    }
     if (this.btnApplyCrop) {
       this.btnApplyCrop.addEventListener('click', () => this.applyCrop());
     }
@@ -588,6 +704,15 @@ class ScannerApp {
     this.updateCropBoxDOM();
   }
 
+  autoDetectCropBox() {
+    const box = ImageProcessor.detectBorders(this.cropCanvas);
+    this.cropState.boxX = box.x;
+    this.cropState.boxY = box.y;
+    this.cropState.boxW = box.w;
+    this.cropState.boxH = box.h;
+    this.updateCropBoxDOM();
+  }
+
   async openCropModal() {
     if (this.selectedIndex < 0 || this.selectedIndex >= this.pages.length) return;
 
@@ -614,7 +739,7 @@ class ScannerApp {
       this.cropState.canvasW = cW;
       this.cropState.canvasH = cH;
 
-      this.resetCropBox();
+      this.autoDetectCropBox();
 
       if (window.bootstrap && this.cropModalEl) {
         if (!this.cropModalInstance) {
