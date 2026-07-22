@@ -220,105 +220,93 @@ class ImageProcessor {
     });
   }
 
-  /**
-   * Automatic Document Border Detection (Color Deviation Projection Profile)
-   */
   static detectBorders(canvas) {
     const w = canvas.width;
     const h = canvas.height;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const imgData = ctx.getImageData(0, 0, w, h);
     const pixels = imgData.data;
 
-    // 1. Sample corners to estimate background color (mean RGB)
-    const sampleSize = 8;
-    let rSum = 0, gSum = 0, bSum = 0, count = 0;
-    const corners = [
-      { x: 2, y: 2 },
-      { x: w - 2 - sampleSize, y: 2 },
-      { x: 2, y: h - 2 - sampleSize },
-      { x: w - 2 - sampleSize, y: h - 2 - sampleSize }
-    ];
-    for (const corner of corners) {
-      for (let cy = 0; cy < sampleSize; cy++) {
-        for (let cx = 0; cx < sampleSize; cx++) {
-          const px = corner.x + cx;
-          const py = corner.y + cy;
-          if (px >= 0 && px < w && py >= 0 && py < h) {
-            const idx = (py * w + px) * 4;
-            rSum += pixels[idx];
-            gSum += pixels[idx + 1];
-            bSum += pixels[idx + 2];
-            count++;
-          }
-        }
-      }
-    }
-    const bgR = count > 0 ? rSum / count : 255;
-    const bgG = count > 0 ? gSum / count : 255;
-    const bgB = count > 0 ? bSum / count : 255;
+    // Sobel/Difference gradient profiles
+    const rowEnergy = new Float32Array(h);
+    const colEnergy = new Float32Array(w);
 
-    // 2. Count deviations per row/column
-    const devX = new Int32Array(w);
-    const devY = new Int32Array(h);
-    const COLOR_DIST_THRESHOLD = 20;
+    const GRAD_THRESHOLD = 15;
 
-    for (let y = 2; y < h - 2; y++) {
-      for (let x = 2; x < w - 2; x++) {
+    for (let y = 2; y < h - 2; y += 2) {
+      for (let x = 2; x < w - 2; x += 2) {
         const idx = (y * w + x) * 4;
-        const r = pixels[idx];
-        const g = pixels[idx + 1];
-        const b = pixels[idx + 2];
-        const dist = Math.sqrt((r - bgR) ** 2 + (g - bgG) ** 2 + (b - bgB) ** 2);
         
-        if (dist > COLOR_DIST_THRESHOLD) {
-          devX[x]++;
-          devY[y]++;
+        // Luminance
+        const r = pixels[idx], g = pixels[idx + 1], b = pixels[idx + 2];
+        const v = 0.299 * r + 0.587 * g + 0.114 * b;
+
+        // Neighbor pixels differences
+        const idxR = (y * w + (x + 1)) * 4;
+        const vR = 0.299 * pixels[idxR] + 0.587 * pixels[idxR + 1] + 0.114 * pixels[idxR + 2];
+
+        const idxD = ((y + 1) * w + x) * 4;
+        const vD = 0.299 * pixels[idxD] + 0.587 * pixels[idxD + 1] + 0.114 * pixels[idxD + 2];
+
+        const gx = vR - v;
+        const gy = vD - v;
+        const mag = Math.sqrt(gx * gx + gy * gy);
+
+        if (mag > GRAD_THRESHOLD) {
+          rowEnergy[y] += mag;
+          colEnergy[x] += mag;
         }
       }
     }
 
-    // Find boundaries: where row/column has significant deviation (at least 1.5% of pixels deviate)
-    let minX = 0, maxX = w - 1;
-    let minY = 0, maxY = h - 1;
+    // Find average row/column energy to set adaptive thresholds
+    let totalColEnergy = 0;
+    for (let x = 0; x < w; x++) totalColEnergy += colEnergy[x];
+    const avgColEnergy = totalColEnergy / w;
+    const thresholdX = avgColEnergy * 0.18; // 18% of average energy triggers boundary
 
-    const thresholdX = Math.max(2, Math.round(h * 0.015));
-    const thresholdY = Math.max(2, Math.round(w * 0.015));
+    let totalRowEnergy = 0;
+    for (let y = 0; y < h; y++) totalRowEnergy += rowEnergy[y];
+    const avgRowEnergy = totalRowEnergy / h;
+    const thresholdY = avgRowEnergy * 0.18;
 
-    // Find minX
-    for (let x = 0; x < w; x++) {
-      if (devX[x] > thresholdX) {
+    let minX = 2, maxX = w - 3;
+    let minY = 2, maxY = h - 3;
+
+    // Find minX boundary
+    for (let x = 4; x < w - 4; x++) {
+      if (colEnergy[x] > thresholdX) {
         minX = x;
         break;
       }
     }
 
-    // Find maxX
-    for (let x = w - 1; x >= 0; x--) {
-      if (devX[x] > thresholdX) {
+    // Find maxX boundary
+    for (let x = w - 5; x >= 4; x--) {
+      if (colEnergy[x] > thresholdX) {
         maxX = x;
         break;
       }
     }
 
-    // Find minY
-    for (let y = 0; y < h; y++) {
-      if (devY[y] > thresholdY) {
+    // Find minY boundary
+    for (let y = 4; y < h - 4; y++) {
+      if (rowEnergy[y] > thresholdY) {
         minY = y;
         break;
       }
     }
 
-    // Find maxY
-    for (let y = h - 1; y >= 0; y--) {
-      if (devY[y] > thresholdY) {
+    // Find maxY boundary
+    for (let y = h - 5; y >= 4; y--) {
+      if (rowEnergy[y] > thresholdY) {
         maxY = y;
         break;
       }
     }
 
-    // Add padding to avoid cutoffs
-    const pad = 6;
+    // Apply a safety margin padding around the detected box
+    const pad = 8;
     minX = Math.max(0, minX - pad);
     maxX = Math.min(w - 1, maxX + pad);
     minY = Math.max(0, minY - pad);
@@ -328,7 +316,6 @@ class ImageProcessor {
     const boxH = maxY - minY;
 
     if (boxW < 40 || boxH < 40) {
-      // Fallback to margins if detection fails
       return { x: 10, y: 10, w: w - 20, h: h - 20 };
     }
 
