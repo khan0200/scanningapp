@@ -225,6 +225,11 @@ class ImageProcessor {
     const origW = canvas.width;
     const origH = canvas.height;
 
+    // First, let's detect the outer page border (backing sheet) using the standard detectBorders method
+    const pageBox = ImageProcessor.detectBorders(canvas);
+    if (!pageBox) return null;
+
+    // Downsample for analysis
     const maxDim = 400;
     let w = origW;
     let h = origH;
@@ -247,61 +252,72 @@ class ImageProcessor {
     const imgData = tempCtx.getImageData(0, 0, w, h);
     const pixels = imgData.data;
 
-    const gray = new Uint8Array(w * h);
-    for (let i = 0; i < w * h; i++) {
-      const r = pixels[i * 4];
-      const g = pixels[i * 4 + 1];
-      const b = pixels[i * 4 + 2];
-      gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
-    }
+    // Scale pageBox coordinates to downsampled coordinates
+    const scaleX = w / origW;
+    const scaleY = h / origH;
 
-    const G = new Float32Array(w * h);
-    for (let y = 1; y < h - 1; y++) {
-      for (let x = 1; x < w - 1; x++) {
-        const gx =
-          -gray[(y - 1) * w + (x - 1)] - 2 * gray[y * w + (x - 1)] - gray[(y + 1) * w + (x - 1)] +
-           gray[(y - 1) * w + (x + 1)] + 2 * gray[y * w + (x + 1)] + gray[(y + 1) * w + (x + 1)];
-        const gy =
-          -gray[(y - 1) * w + (x - 1)] - 2 * gray[(y - 1) * w + x] - gray[(y - 1) * w + (x + 1)] +
-           gray[(y + 1) * w + (x - 1)] + 2 * gray[(y + 1) * w + x] + gray[(y + 1) * w + (x + 1)];
-        G[y * w + x] = Math.sqrt(gx * gx + gy * gy);
+    const pageMinX = Math.max(0, Math.floor(pageBox.x * scaleX));
+    const pageMinY = Math.max(0, Math.floor(pageBox.y * scaleY));
+    const pageMaxX = Math.min(w - 1, Math.ceil((pageBox.x + pageBox.w) * scaleX));
+    const pageMaxY = Math.min(h - 1, Math.ceil((pageBox.y + pageBox.h) * scaleY));
+
+    // 1. Sample the backing paper color near the margins of the detected pageBox
+    // We sample a margin-thick band inside the borders of pageBox
+    let sumR = 0, sumG = 0, sumB = 0, sampleCount = 0;
+    const margin = 8;
+    for (let y = pageMinY; y <= pageMaxY; y++) {
+      for (let x = pageMinX; x <= pageMaxX; x++) {
+        const isNearBorder = (y < pageMinY + margin || y > pageMaxY - margin || x < pageMinX + margin || x > pageMaxX - margin);
+        if (isNearBorder) {
+          const idx = (y * w + x) * 4;
+          sumR += pixels[idx];
+          sumG += pixels[idx + 1];
+          sumB += pixels[idx + 2];
+          sampleCount++;
+        }
       }
     }
 
-    const binaryEdges = new Uint8Array(w * h);
-    const EDGE_THRESH = 20;
-    for (let i = 0; i < w * h; i++) {
-      binaryEdges[i] = G[i] > EDGE_THRESH ? 255 : 0;
-    }
+    const bgR = sampleCount > 0 ? (sumR / sampleCount) : 230;
+    const bgG = sampleCount > 0 ? (sumG / sampleCount) : 235;
+    const bgB = sampleCount > 0 ? (sumB / sampleCount) : 240;
 
-    const r = 10;
-    const integral = new Uint32Array(w * h);
-    for (let y = 0; y < h; y++) {
-      let rowSum = 0;
-      for (let x = 0; x < w; x++) {
-        rowSum += binaryEdges[y * w + x];
-        integral[y * w + x] = (y === 0) ? rowSum : (integral[(y - 1) * w + x] + rowSum);
+    // 2. Perform delta-thresholding against this backing page background color inside pageBox
+    const thresholded = new Uint8Array(w * h);
+    const colorDistThreshold = 35; // Manhattan distance threshold in RGB space
+
+    for (let y = pageMinY; y <= pageMaxY; y++) {
+      for (let x = pageMinX; x <= pageMaxX; x++) {
+        const idx = (y * w + x) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+
+        const dist = Math.abs(r - bgR) + Math.abs(g - bgG) + Math.abs(b - bgB);
+        if (dist > colorDistThreshold) {
+          thresholded[y * w + x] = 255;
+        } else {
+          thresholded[y * w + x] = 0;
+        }
       }
     }
 
-    const denseEdges = new Uint8Array(w * h);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const x1 = Math.max(0, x - r);
-        const y1 = Math.max(0, y - r);
-        const x2 = Math.min(w - 1, x + r);
-        const y2 = Math.min(h - 1, y + r);
-        const count = (x2 - x1 + 1) * (y2 - y1 + 1);
-        let sum = integral[y2 * w + x2];
-        if (x1 > 0) sum -= integral[y2 * w + (x1 - 1)];
-        if (y1 > 0) sum -= integral[(y1 - 1) * w + x2];
-        if (x1 > 0 && y1 > 0) sum += integral[(y1 - 1) * w + (x1 - 1)];
-
-        const density = (sum / 255) / count;
-        denseEdges[y * w + x] = density > 0.08 ? 255 : 0;
+    // 3. Morphological close/dilation to fill holes inside the subject
+    const closed = new Uint8Array(w * h);
+    for (let y = pageMinY + 1; y < pageMaxY - 1; y++) {
+      for (let x = pageMinX + 1; x < pageMaxX - 1; x++) {
+        let maxVal = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const v = thresholded[(y + dy) * w + (x + dx)];
+            if (v > maxVal) maxVal = v;
+          }
+        }
+        closed[y * w + x] = maxVal;
       }
     }
 
+    // 4. Connected Component Labeling on the thresholded interior subject pixels
     const labels = new Int32Array(w * h);
     let nextLabel = 1;
     const parent = [0];
@@ -322,11 +338,11 @@ class ImageProcessor {
       if (rI !== rJ) parent[rI] = rJ;
     };
 
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (denseEdges[y * w + x] === 255) {
-          const left = (x > 0) ? labels[y * w + (x - 1)] : 0;
-          const top = (y > 0) ? labels[(y - 1) * w + x] : 0;
+    for (let y = pageMinY; y <= pageMaxY; y++) {
+      for (let x = pageMinX; x <= pageMaxX; x++) {
+        if (closed[y * w + x] === 255) {
+          const left = (x > pageMinX) ? labels[y * w + (x - 1)] : 0;
+          const top = (y > pageMinY) ? labels[(y - 1) * w + x] : 0;
 
           if (left === 0 && top === 0) {
             labels[y * w + x] = nextLabel;
@@ -345,8 +361,8 @@ class ImageProcessor {
     }
 
     const components = {};
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
+    for (let y = pageMinY; y <= pageMaxY; y++) {
+      for (let x = pageMinX; x <= pageMaxX; x++) {
         const l = labels[y * w + x];
         if (l !== 0) {
           const rL = find(l);
@@ -364,22 +380,26 @@ class ImageProcessor {
       }
     }
 
+    // 5. Select the best subject component
     let bestComp = null;
     let bestScore = -1;
-    const totalArea = w * h;
+    const pageArea = (pageMaxX - pageMinX) * (pageMaxY - pageMinY);
 
     for (const label in components) {
       const c = components[label];
       const compW = c.maxX - c.minX + 1;
       const compH = c.maxY - c.minY + 1;
 
-      if (c.count < totalArea * 0.005) continue;
-      if (compW >= w - 10 && compH >= h - 10) continue;
+      // Filter A: Ignore very small specs (must be at least 1% of the page area)
+      if (c.count < pageArea * 0.01) continue;
+
+      // Filter B: If it covers basically the entire backing sheet, it's just the backing sheet border or a shadow, ignore
+      if (compW >= (pageMaxX - pageMinX) - 5 && compH >= (pageMaxY - pageMinY) - 5) continue;
 
       let score = c.count;
-      const ratio = compW / compH;
-      if (ratio > 0.3 && ratio < 3.5) {
-        score *= 1.5;
+      const aspect = compW / compH;
+      if (aspect > 0.4 && aspect < 2.5) {
+        score *= 1.3;
       }
 
       if (score > bestScore) {
@@ -388,17 +408,21 @@ class ImageProcessor {
       }
     }
 
-    if (!bestComp) return null;
+    // Fallback: If no distinct subject is found inside the backing sheet, return pageBox (the backing page itself)
+    if (!bestComp) {
+      return pageBox;
+    }
 
-    const scaleX = origW / w;
-    const scaleY = origH / h;
+    const invScaleX = origW / w;
+    const invScaleY = origH / h;
 
-    let finalMinX = Math.round(bestComp.minX * scaleX);
-    let finalMaxX = Math.round((bestComp.maxX + 1) * scaleX);
-    let finalMinY = Math.round(bestComp.minY * scaleY);
-    let finalMaxY = Math.round((bestComp.maxY + 1) * scaleY);
+    let finalMinX = Math.round(bestComp.minX * invScaleX);
+    let finalMaxX = Math.round((bestComp.maxX + 1) * invScaleX);
+    let finalMinY = Math.round(bestComp.minY * invScaleY);
+    let finalMaxY = Math.round((bestComp.maxY + 1) * invScaleY);
 
-    const padding = 10;
+    // Add padding
+    const padding = 8;
     finalMinX = Math.max(0, finalMinX - padding);
     finalMaxX = Math.min(origW - 1, finalMaxX + padding);
     finalMinY = Math.max(0, finalMinY - padding);
