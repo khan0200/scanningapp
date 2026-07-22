@@ -192,25 +192,24 @@
 
   <!-- Bootstrap 5 Modal for Scanning Progress -->
   <div class="modal fade" id="scanProgressModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
-    <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content text-center p-4 border-0 shadow-lg">
-        <div class="modal-body p-0 d-flex flex-column align-items-center gap-3">
+    <div class="modal-dialog modal-dialog-centered" style="max-width: 360px;">
+      <div class="modal-content text-center p-3 border-0 shadow-lg" style="border-radius: 12px;">
+        <div class="modal-body p-3 d-flex flex-column align-items-center gap-3">
           
-          <div class="bg-primary-subtle p-3 rounded-circle text-primary mb-1">
-            <i class="bi bi-printer fs-1"></i>
+          <!-- Scanner Laser Beam Animation -->
+          <div class="scanner-anim-box">
+            <i class="bi bi-printer-fill text-primary display-5"></i>
+            <div class="scanner-laser-line"></div>
           </div>
 
-          <div>
-            <h5 class="modal-title fw-bold mb-1">Scanning Document...</h5>
-            <p class="text-muted small mb-0" id="scanProgressSubtitle">Acquiring page from scanner...</p>
-          </div>
+          <h5 class="modal-title fw-bold text-dark mb-0">Scanning Document...</h5>
 
           <!-- Bootstrap Striped Animated Progress Bar -->
-          <div class="progress w-100 mt-2" style="height: 10px;">
+          <div class="progress w-100 mt-1" style="height: 8px; border-radius: 4px; background: #e9ecef;">
             <div class="progress-bar progress-bar-striped progress-bar-animated w-100 bg-primary" role="progressbar"></div>
           </div>
 
-          <button class="btn btn-danger btn-sm px-4 mt-2" id="btnModalStopScan">
+          <button class="btn btn-danger btn-sm px-4 mt-1" id="btnModalStopScan">
             <i class="bi bi-stop-circle me-1"></i>Stop
           </button>
 

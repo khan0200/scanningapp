@@ -97,3 +97,32 @@ body {
 .hidden-input {
   display: none !important;
 }
+
+/* Glowing Scanner Laser Animation */
+.scanner-anim-box {
+  width: 76px;
+  height: 76px;
+  background: #e7f1ff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 0 20px rgba(13, 110, 253, 0.25);
+}
+
+.scanner-laser-line {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #0d6efd, #ffffff, #0d6efd, transparent);
+  box-shadow: 0 0 10px #0d6efd;
+  animation: laserScan 1.5s ease-in-out infinite alternate;
+}
+
+@keyframes laserScan {
+  0% { top: 12%; }
+  100% { top: 88%; }
+}
