@@ -221,105 +221,314 @@ class ImageProcessor {
   }
 
   static detectBorders(canvas) {
-    const w = canvas.width;
-    const h = canvas.height;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const imgData = ctx.getImageData(0, 0, w, h);
+    const origW = canvas.width;
+    const origH = canvas.height;
+
+    // 1. Downsample to max 400px for high performance (< 30ms processing time)
+    const maxDim = 400;
+    let w = origW;
+    let h = origH;
+    if (w > maxDim || h > maxDim) {
+      if (w > h) {
+        h = Math.round((h * maxDim) / w);
+        w = maxDim;
+      } else {
+        w = Math.round((w * maxDim) / h);
+        h = maxDim;
+      }
+    }
+
+    // Create offscreen canvas for downsampling
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = w;
+    tempCanvas.height = h;
+    const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+    tempCtx.drawImage(canvas, 0, 0, w, h);
+
+    const imgData = tempCtx.getImageData(0, 0, w, h);
     const pixels = imgData.data;
 
-    // Sobel/Difference gradient profiles
-    const rowEnergy = new Float32Array(h);
-    const colEnergy = new Float32Array(w);
+    // 2. Grayscale conversion
+    const gray = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const r = pixels[i * 4];
+      const g = pixels[i * 4 + 1];
+      const b = pixels[i * 4 + 2];
+      gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
+    }
 
-    const GRAD_THRESHOLD = 15;
+    // 3. Gaussian/Box Blur (5x5 neighborhood)
+    const blurred = new Uint8Array(w * h);
+    const blurRadius = 2;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let sum = 0;
+        let count = 0;
+        for (let dy = -blurRadius; dy <= blurRadius; dy++) {
+          const ny = y + dy;
+          if (ny >= 0 && ny < h) {
+            for (let dx = -blurRadius; dx <= blurRadius; dx++) {
+              const nx = x + dx;
+              if (nx >= 0 && nx < w) {
+                sum += gray[ny * w + nx];
+                count++;
+              }
+            }
+          }
+        }
+        blurred[y * w + x] = Math.round(sum / count);
+      }
+    }
 
-    for (let y = 2; y < h - 2; y += 2) {
-      for (let x = 2; x < w - 2; x += 2) {
-        const idx = (y * w + x) * 4;
-        
-        // Luminance
-        const r = pixels[idx], g = pixels[idx + 1], b = pixels[idx + 2];
-        const v = 0.299 * r + 0.587 * g + 0.114 * b;
+    // 4. Sample the scanner bed background color from the extreme borders (first 4 rows/cols)
+    let borderSum = 0;
+    let borderCount = 0;
+    const borderThickness = 4;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (y < borderThickness || y >= h - borderThickness || x < borderThickness || x >= w - borderThickness) {
+          borderSum += blurred[y * w + x];
+          borderCount++;
+        }
+      }
+    }
+    const scannerBedLuminance = borderCount > 0 ? (borderSum / borderCount) : 240;
 
-        // Neighbor pixels differences
-        const idxR = (y * w + (x + 1)) * 4;
-        const vR = 0.299 * pixels[idxR] + 0.587 * pixels[idxR + 1] + 0.114 * pixels[idxR + 2];
-
-        const idxD = ((y + 1) * w + x) * 4;
-        const vD = 0.299 * pixels[idxD] + 0.587 * pixels[idxD + 1] + 0.114 * pixels[idxD + 2];
-
-        const gx = vR - v;
-        const gy = vD - v;
-        const mag = Math.sqrt(gx * gx + gy * gy);
-
-        if (mag > GRAD_THRESHOLD) {
-          rowEnergy[y] += mag;
-          colEnergy[x] += mag;
+    // 5. Integral Image for Adaptive Thresholding
+    const integral = new Uint32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      let rowSum = 0;
+      for (let x = 0; x < w; x++) {
+        rowSum += blurred[y * w + x];
+        if (y === 0) {
+          integral[y * w + x] = rowSum;
+        } else {
+          integral[y * w + x] = integral[(y - 1) * w + x] + rowSum;
         }
       }
     }
 
-    // Find average row/column energy to set adaptive thresholds
-    let totalColEnergy = 0;
-    for (let x = 0; x < w; x++) totalColEnergy += colEnergy[x];
-    const avgColEnergy = totalColEnergy / w;
-    const thresholdX = avgColEnergy * 0.18; // 18% of average energy triggers boundary
+    // 6. Hybrid Thresholding
+    const thresholded = new Uint8Array(w * h);
+    const S = Math.round(Math.min(w, h) / 8) | 1; // local neighborhood window size
+    const halfS = (S - 1) >> 1;
+    const localEdgeC = 8; // threshold constant for local edges
+    const bgDiffThreshold = 25; // threshold constant for difference from scanner bed
 
-    let totalRowEnergy = 0;
-    for (let y = 0; y < h; y++) totalRowEnergy += rowEnergy[y];
-    const avgRowEnergy = totalRowEnergy / h;
-    const thresholdY = avgRowEnergy * 0.18;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const x1 = Math.max(0, x - halfS);
+        const y1 = Math.max(0, y - halfS);
+        const x2 = Math.min(w - 1, x + halfS);
+        const y2 = Math.min(h - 1, y + halfS);
 
-    let minX = 2, maxX = w - 3;
-    let minY = 2, maxY = h - 3;
+        const count = (x2 - x1 + 1) * (y2 - y1 + 1);
+        let sum = integral[y2 * w + x2];
+        if (x1 > 0) sum -= integral[y2 * w + (x1 - 1)];
+        if (y1 > 0) sum -= integral[(y1 - 1) * w + x2];
+        if (x1 > 0 && y1 > 0) sum += integral[(y1 - 1) * w + (x1 - 1)];
 
-    // Find minX boundary
-    for (let x = 4; x < w - 4; x++) {
-      if (colEnergy[x] > thresholdX) {
-        minX = x;
-        break;
+        const localAvg = sum / count;
+        const val = blurred[y * w + x];
+
+        // Pixel is classified as object if:
+        // A. It differs significantly from scanner bed background
+        // B. It is a local edge/shadow transition
+        const diffFromBg = Math.abs(val - scannerBedLuminance);
+        const diffFromLocal = Math.abs(val - localAvg);
+
+        if (diffFromBg > bgDiffThreshold || diffFromLocal > localEdgeC) {
+          thresholded[y * w + x] = 255;
+        } else {
+          thresholded[y * w + x] = 0;
+        }
       }
     }
 
-    // Find maxX boundary
-    for (let x = w - 5; x >= 4; x--) {
-      if (colEnergy[x] > thresholdX) {
-        maxX = x;
-        break;
+    // 7. Morphological Close (Dilation followed by Erosion with 3x3 window)
+    const dilated = new Uint8Array(w * h);
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        let maxVal = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const v = thresholded[(y + dy) * w + (x + dx)];
+            if (v > maxVal) maxVal = v;
+          }
+        }
+        dilated[y * w + x] = maxVal;
       }
     }
 
-    // Find minY boundary
-    for (let y = 4; y < h - 4; y++) {
-      if (rowEnergy[y] > thresholdY) {
-        minY = y;
-        break;
+    const closed = new Uint8Array(w * h);
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        let minVal = 255;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const v = dilated[(y + dy) * w + (x + dx)];
+            if (v < minVal) minVal = v;
+          }
+        }
+        closed[y * w + x] = minVal;
       }
     }
 
-    // Find maxY boundary
-    for (let y = h - 5; y >= 4; y--) {
-      if (rowEnergy[y] > thresholdY) {
-        maxY = y;
-        break;
+    // 8. Connected Component Labeling (CCL)
+    const labels = new Int32Array(w * h);
+    let nextLabel = 1;
+    const parent = [];
+    
+    const find = (i) => {
+      let root = i;
+      while (parent[root] !== root) {
+        root = parent[root];
+      }
+      let curr = i;
+      while (curr !== root) {
+        let nxt = parent[curr];
+        parent[curr] = root;
+        curr = nxt;
+      }
+      return root;
+    };
+
+    const union = (i, j) => {
+      const rootI = find(i);
+      const rootJ = find(j);
+      if (rootI !== rootJ) {
+        parent[rootI] = rootJ;
+      }
+    };
+
+    parent[0] = 0;
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (closed[y * w + x] === 255) {
+          const left = (x > 0) ? labels[y * w + (x - 1)] : 0;
+          const top = (y > 0) ? labels[(y - 1) * w + x] : 0;
+
+          if (left === 0 && top === 0) {
+            labels[y * w + x] = nextLabel;
+            parent[nextLabel] = nextLabel;
+            nextLabel++;
+          } else if (left !== 0 && top === 0) {
+            labels[y * w + x] = left;
+          } else if (left === 0 && top !== 0) {
+            labels[y * w + x] = top;
+          } else {
+            labels[y * w + x] = Math.min(left, top);
+            if (left !== top) {
+              union(left, top);
+            }
+          }
+        }
       }
     }
 
-    // Apply a safety margin padding around the detected box
-    const pad = 8;
-    minX = Math.max(0, minX - pad);
-    maxX = Math.min(w - 1, maxX + pad);
-    minY = Math.max(0, minY - pad);
-    maxY = Math.min(h - 1, maxY + pad);
+    // Consolidate components statistics
+    const components = {};
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const l = labels[y * w + x];
+        if (l !== 0) {
+          const rootLabel = find(l);
+          labels[y * w + x] = rootLabel;
 
-    const boxW = maxX - minX;
-    const boxH = maxY - minY;
-
-    if (boxW < 40 || boxH < 40) {
-      return { x: 10, y: 10, w: w - 20, h: h - 20 };
+          if (!components[rootLabel]) {
+            components[rootLabel] = {
+              minX: x, maxX: x,
+              minY: y, maxY: y,
+              pixelCount: 0
+            };
+          }
+          const cData = components[rootLabel];
+          cData.pixelCount++;
+          if (x < cData.minX) cData.minX = x;
+          if (x > cData.maxX) cData.maxX = x;
+          if (y < cData.minY) cData.minY = y;
+          if (y > cData.maxY) cData.maxY = y;
+        }
+      }
     }
 
-    return { x: minX, y: minY, w: boxW, h: boxH };
+    // 9. Filter Candidates & Select Best Document Bounding Box
+    let bestComp = null;
+    let bestScore = -1;
+    const totalArea = w * h;
+
+    for (const label in components) {
+      const comp = components[label];
+      const compW = comp.maxX - comp.minX + 1;
+      const compH = comp.maxY - comp.minY + 1;
+      const compArea = compW * compH;
+
+      // Filter A: Minimum area check (must be at least 1.5% of scan size)
+      if (comp.pixelCount < totalArea * 0.015) continue;
+
+      // Filter B: Reject components that take up literally 100% of the canvas border
+      // (which is likely the outer scan border/shadow itself)
+      if (compW >= w - 4 && compH >= h - 4) {
+        // If it fills the entire screen, verify if it's extremely hollow
+        const fill = comp.pixelCount / totalArea;
+        if (fill < 0.35) continue; // Hollow frame border rejection
+      }
+
+      // Filter C: Aspect Ratio check (receipts, banknotes, passports range between 0.2 and 5.0)
+      const aspect = compW / compH;
+      if (aspect < 0.18 || aspect > 5.5) continue;
+
+      // Filter D: Solidity/Fill ratio check
+      const fillRatio = comp.pixelCount / compArea;
+      if (fillRatio < 0.35) continue; // Reject highly disjointed/hollow frame fragments
+
+      // Score computation: we prefer larger, solid components matching typical document sizes
+      let score = comp.pixelCount;
+
+      // Aspect ratio weight (banknotes, IDs, A4 have ratios around 0.5 - 2.0)
+      if (aspect > 0.4 && aspect < 2.5) {
+        score *= 1.4;
+      }
+
+      // Solidity weight
+      if (fillRatio > 0.6) {
+        score *= 1.3;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestComp = comp;
+      }
+    }
+
+    // 10. Fallback and Final Box Scaling with Padding
+    if (!bestComp) {
+      // Default to 10px margins if no valid document detected
+      return { x: 10, y: 10, w: origW - 20, h: origH - 20 };
+    }
+
+    const scaleX = origW / w;
+    const scaleY = origH / h;
+
+    let finalMinX = Math.round(bestComp.minX * scaleX);
+    let finalMaxX = Math.round((bestComp.maxX + 1) * scaleX);
+    let finalMinY = Math.round(bestComp.minY * scaleY);
+    let finalMaxY = Math.round((bestComp.maxY + 1) * scaleY);
+
+    // Add approximately 5-10 pixels of padding
+    const padding = 8;
+    finalMinX = Math.max(0, finalMinX - padding);
+    finalMaxX = Math.min(origW - 1, finalMaxX + padding);
+    finalMinY = Math.max(0, finalMinY - padding);
+    finalMaxY = Math.min(origH - 1, finalMaxY + padding);
+
+    return {
+      x: finalMinX,
+      y: finalMinY,
+      w: finalMaxX - finalMinX,
+      h: finalMaxY - finalMinY
+    };
   }
 }
 
