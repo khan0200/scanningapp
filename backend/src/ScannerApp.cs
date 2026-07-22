@@ -19,8 +19,9 @@ namespace NativeWiaScanner
             int dpi = args.Length > 1 ? int.Parse(args[1]) : 300;
             string colorMode = args.Length > 2 ? args[2] : "Color";
             string source = args.Length > 3 ? args[3] : "Flatbed";
+            string paperSize = args.Length > 4 ? args[4] : "A4";
 
-            ScanDocument(scannerId, dpi, colorMode, source);
+            ScanDocument(scannerId, dpi, colorMode, source, paperSize);
         }
 
         static void ListScanners()
@@ -50,12 +51,12 @@ namespace NativeWiaScanner
                 }
 
                 Console.WriteLine("[" + string.Join(",", jsonItems.ToArray()) + "]");
-            } catch (Exception ex) {
+            } catch {
                 Console.WriteLine("[]");
             }
         }
 
-        static void ScanDocument(string scannerId, int dpi, string colorMode, string source)
+        static void ScanDocument(string scannerId, int dpi, string colorMode, string source, string paperSize)
         {
             string tempDir = Path.Combine(Path.GetTempPath(), "wia_cs_" + Guid.NewGuid().ToString());
             Directory.CreateDirectory(tempDir);
@@ -108,6 +109,39 @@ namespace NativeWiaScanner
                 // Paper Source: 1=Flatbed, 2=ADF
                 int paperSourceVal = source.Equals("ADF", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
                 try { device.Properties["3088"].Value = paperSourceVal; } catch {}
+
+                // Full Page Dimensions (A4 = 8.27 x 11.69 in, Letter = 8.5 x 11.0 in)
+                double widthInches = 8.27;  // A4 Default Width
+                double heightInches = 11.69; // A4 Default Height
+
+                if (paperSize.Equals("Letter", StringComparison.OrdinalIgnoreCase)) {
+                    widthInches = 8.5;
+                    heightInches = 11.0;
+                }
+
+                int targetWidthPx = (int)(widthInches * dpi);
+                int targetHeightPx = (int)(heightInches * dpi);
+
+                // Set Start Positions to 0 (top-left origin)
+                try { item.Properties["6149"].Value = 0; } catch {} // Horizontal Start
+                try { item.Properties["6150"].Value = 0; } catch {} // Vertical Start
+
+                // Set Extents (Width & Height)
+                try {
+                    var widthProp = item.Properties["6151"];
+                    int maxW = Convert.ToInt32(widthProp.Attributes.MaxValue);
+                    widthProp.Value = Math.Min(targetWidthPx, maxW > 0 ? maxW : targetWidthPx);
+                } catch {
+                    try { item.Properties["6151"].Value = targetWidthPx; } catch {}
+                }
+
+                try {
+                    var heightProp = item.Properties["6152"];
+                    int maxH = Convert.ToInt32(heightProp.Attributes.MaxValue);
+                    heightProp.Value = Math.Min(targetHeightPx, maxH > 0 ? maxH : targetHeightPx);
+                } catch {
+                    try { item.Properties["6152"].Value = targetHeightPx; } catch {}
+                }
 
                 string jpegFormatGuid = "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}";
                 List<string> base64Pages = new List<string>();

@@ -30,9 +30,10 @@ async function scanWia(params = {}) {
     const dpi = parseInt(params.dpi, 10) || 300;
     const colorMode = params.colorMode || 'Color';
     const source = params.source || 'Flatbed';
+    const paperSize = params.paperSize || 'A4';
     const scannerId = params.scannerId || '';
 
-    const cmd = `"${EXECUTABLE}" "${scannerId}" ${dpi} "${colorMode}" "${source}"`;
+    const cmd = `"${EXECUTABLE}" "${scannerId}" ${dpi} "${colorMode}" "${source}" "${paperSize}"`;
 
     console.log('[Native WIA Scan Executing]:', cmd);
 
