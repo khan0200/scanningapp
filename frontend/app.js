@@ -1,5 +1,5 @@
 /**
- * NAPS2 Web Document Scanner - Frontend Controller
+ * NAPS2 Web Document Scanner - Bootstrap 5 Edition Controller
  */
 
 class DocumentPage {
@@ -55,6 +55,8 @@ class ScannerApp {
     this.zoomScale = 1.0;
     this.sortable = null;
     this.scanners = [];
+    this.scanModalInstance = null;
+
     // Detect backend URL (use localhost:3000 when hosted on VSCode Live Server / 127.0.0.1 / file://)
     const isNativeHost = window.location.port === '3000';
     this.apiUrl = isNativeHost ? '' : 'http://localhost:3000';
@@ -95,11 +97,10 @@ class ScannerApp {
     this.pageCard = document.getElementById('pageCard');
     this.pageCounter = document.getElementById('pageCounter');
     this.thumbnailCount = document.getElementById('thumbnailCount');
-    this.scanningBar = document.getElementById('scanningBar');
     this.fileInput = document.getElementById('fileInput');
 
     // Overlay Modal elements
-    this.scanProgressOverlay = document.getElementById('scanProgressOverlay');
+    this.scanProgressModalEl = document.getElementById('scanProgressModal');
     this.scanProgressSubtitle = document.getElementById('scanProgressSubtitle');
     this.btnModalStopScan = document.getElementById('btnModalStopScan');
 
@@ -225,16 +226,19 @@ class ScannerApp {
 
   async triggerHardwareScan() {
     this.hideAlert();
-    this.scanningBar.style.display = 'block';
     this.btnScan.classList.add('hidden-input');
     this.btnStopScan.classList.remove('hidden-input');
 
     const selectedName = this.scannerSelect.options[this.scannerSelect.selectedIndex]?.textContent || 'Canon G3410';
     if (this.scanProgressSubtitle) {
-      this.scanProgressSubtitle.textContent = `Acquiring document from ${selectedName} (${this.dpiSelect.value} DPI ${this.colorSelect.value})...`;
+      this.scanProgressSubtitle.textContent = `Acquiring page from ${selectedName} (${this.dpiSelect.value} DPI ${this.colorSelect.value})...`;
     }
-    if (this.scanProgressOverlay) {
-      this.scanProgressOverlay.classList.add('active');
+
+    if (window.bootstrap && this.scanProgressModalEl) {
+      if (!this.scanModalInstance) {
+        this.scanModalInstance = new bootstrap.Modal(this.scanProgressModalEl);
+      }
+      this.scanModalInstance.show();
     }
 
     this.scanAbortController = new AbortController();
@@ -292,9 +296,8 @@ class ScannerApp {
   }
 
   resetScanUI() {
-    this.scanningBar.style.display = 'none';
-    if (this.scanProgressOverlay) {
-      this.scanProgressOverlay.classList.remove('active');
+    if (this.scanModalInstance) {
+      this.scanModalInstance.hide();
     }
     this.btnScan.classList.remove('hidden-input');
     this.btnStopScan.classList.add('hidden-input');
@@ -304,15 +307,15 @@ class ScannerApp {
   showAlert(msg, isError = true) {
     this.alertText.textContent = msg;
     if (isError) {
-      this.alertBanner.classList.add('error');
+      this.alertBanner.className = 'alert alert-danger alert-dismissible fade show mb-0 rounded-0';
     } else {
-      this.alertBanner.classList.remove('error');
+      this.alertBanner.className = 'alert alert-success alert-dismissible fade show mb-0 rounded-0';
     }
-    this.alertBanner.classList.remove('hidden');
+    this.alertBanner.classList.remove('hidden-input');
   }
 
   hideAlert() {
-    this.alertBanner.classList.add('hidden');
+    this.alertBanner.classList.add('hidden-input');
   }
 
   addPage(dataUrl) {
@@ -377,24 +380,22 @@ class ScannerApp {
 
     this.pages.forEach((page, idx) => {
       const item = document.createElement('div');
-      item.className = `thumbnail-item ${idx === this.selectedIndex ? 'active' : ''}`;
+      item.className = `card thumbnail-item mb-2 p-2 shadow-sm ${idx === this.selectedIndex ? 'active border-primary' : ''}`;
       item.addEventListener('click', () => this.selectPage(idx));
 
       item.innerHTML = `
-        <div class="thumbnail-drag-handle" title="Drag to reorder">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
-            <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
-            <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
-          </svg>
-        </div>
-        <div class="thumbnail-badge">${idx + 1}</div>
-        <div class="thumbnail-preview-container">
-          <img class="thumbnail-img" src="${page.dataUrl}" style="transform: rotate(${page.rotation}deg)">
-        </div>
-        <div class="thumbnail-details">
-          <div class="thumbnail-title">Page ${idx + 1}</div>
-          <div class="thumbnail-meta">${page.width} × ${page.height} px ${page.rotation ? `(${page.rotation}°)` : ''}</div>
+        <div class="d-flex align-items-center gap-2">
+          <div class="thumbnail-drag-handle px-1" title="Drag to reorder">
+            <i class="bi bi-grip-vertical fs-5"></i>
+          </div>
+          <span class="badge ${idx === this.selectedIndex ? 'bg-primary' : 'bg-secondary'} rounded-circle p-2" style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 11px;">${idx + 1}</span>
+          <div class="thumbnail-img-box">
+            <img class="thumbnail-img" src="${page.dataUrl}" style="transform: rotate(${page.rotation}deg)">
+          </div>
+          <div class="d-flex flex-column text-truncate">
+            <span class="fw-bold small text-dark">Page ${idx + 1}</span>
+            <span class="text-muted" style="font-size: 10px;">${page.width} × ${page.height} px ${page.rotation ? `(${page.rotation}°)` : ''}</span>
+          </div>
         </div>
       `;
 
@@ -491,14 +492,7 @@ class ScannerApp {
     pdf.save('Scanned_Document_' + new Date().toISOString().slice(0, 10) + '.pdf');
 
     this.btnSavePdf.disabled = false;
-    this.btnSavePdf.innerHTML = `
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-        <polyline points="14 2 14 8 20 8"/>
-        <line x1="16" y1="13" x2="8" y2="13"/>
-        <line x1="16" y1="17" x2="8" y2="17"/>
-      </svg> Save PDF
-    `;
+    this.btnSavePdf.innerHTML = `<i class="bi bi-file-earmark-pdf me-1"></i>Save PDF`;
   }
 
   async exportJpg() {
