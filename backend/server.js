@@ -3,6 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const { getWiaScanners, scanWia, abortWiaScan } = require('./services/wiaScanner');
 const { getTwainScanners, scanTwain } = require('./services/twainScanner');
+const { saveSession, loadSession, clearSession } = require('./services/sessionManager');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,6 +15,34 @@ app.use(express.json({ limit: '50mb' }));
 // Serve frontend static files
 app.use(express.static(path.join(__dirname, '../frontend')));
 app.use(express.static(path.join(__dirname, '..')));
+
+/**
+ * GET /session/pages
+ * Returns temporary session pages for refresh recovery
+ */
+app.get('/session/pages', (req, res) => {
+  const pages = loadSession();
+  res.json({ success: true, pages });
+});
+
+/**
+ * POST /session/pages
+ * Saves current pages to temporary disk cache
+ */
+app.post('/session/pages', (req, res) => {
+  const pages = req.body.pages || [];
+  saveSession(pages);
+  res.json({ success: true, count: pages.length });
+});
+
+/**
+ * POST /session/clear
+ * Clears temporary disk session cache
+ */
+app.post('/session/clear', (req, res) => {
+  clearSession();
+  res.json({ success: true, message: 'Temporary session cache cleared.' });
+});
 
 /**
  * GET /scanners
@@ -49,46 +78,29 @@ app.get('/scanners', async (req, res) => {
  * Automatically tries WIA first, then falls back to TWAIN
  */
 app.post('/scan', async (req, res) => {
-  const { scannerId, dpi, colorMode, source, paperSize } = req.body || {};
+  const { scannerId, dpi, colorMode, source, paperSize } = req.body;
 
-  console.log(`[Scan Request] Scanner: ${scannerId || 'Default'}, DPI: ${dpi}, Mode: ${colorMode}, Source: ${source}, Paper: ${paperSize}`);
+  console.log(`[Scan Request] Scanner: ${scannerId}, DPI: ${dpi}, Mode: ${colorMode}, Source: ${source}, Paper: ${paperSize}`);
 
+  // Primary Scan Engine: Native C# WIA
   try {
-    // 1. Try WIA First
-    let result = await scanWia({ scannerId, dpi, colorMode, source, paperSize });
-
-    // 2. If WIA failed or returned no scanner, automatically try TWAIN fallback
-    if (!result.success && !result.cancelled) {
-      console.log('[Scan] WIA failed or unavailable. Attempting TWAIN fallback...');
-      const twainResult = await scanTwain({ scannerId, dpi, colorMode, source, paperSize });
-      if (twainResult.success) {
-        result = twainResult;
-      }
-    }
-
-    if (result.success) {
-      res.json({
-        success: true,
-        method: result.method || 'WIA',
-        pages: result.pages || []
-      });
-    } else if (result.cancelled) {
-      res.json({
-        success: false,
-        cancelled: true,
-        message: 'Scan cancelled by user.'
-      });
-    } else {
-      res.json({
-        success: false,
-        error: result.error || 'Failed to scan document. Make sure Canon PIXMA G3410 is powered on and connected via USB/Wi-Fi.'
-      });
+    const wiaResult = await scanWia({ scannerId, dpi, colorMode, source, paperSize });
+    if (wiaResult && wiaResult.success && wiaResult.pages && wiaResult.pages.length > 0) {
+      return res.json(wiaResult);
     }
   } catch (err) {
-    console.error('[Scan Server Error]:', err);
-    res.status(500).json({
+    console.warn('[Scan] WIA primary scan failed:', err.message);
+  }
+
+  // Fallback Scan Engine: TWAIN
+  try {
+    console.log('[Scan] WIA failed or unavailable. Attempting TWAIN fallback...');
+    const twainResult = await scanTwain({ scannerId, dpi, colorMode, source, paperSize });
+    return res.json(twainResult);
+  } catch (twainErr) {
+    return res.status(500).json({
       success: false,
-      error: 'Hardware scan failed: ' + err.message
+      error: `Hardware Scan Failure: ${twainErr.message}. Check Canon printer USB connection & power.`
     });
   }
 });
@@ -99,16 +111,19 @@ app.post('/scan', async (req, res) => {
  */
 app.post('/scan/cancel', (req, res) => {
   console.log('[Scan Cancel] Received scan abort request...');
-  abortWiaScan();
-  res.json({ success: true, message: 'Scan operation aborted.' });
+  try {
+    abortWiaScan();
+  } catch (e) {}
+  res.json({ success: true, message: 'Scan abort signal sent.' });
 });
 
-// Start Server
+// Start Node Server
 app.listen(PORT, () => {
   console.log(`====================================================`);
   console.log(` NAPS2 Web Document Scanner Native Server`);
   console.log(` Server URL: http://localhost:${PORT}`);
   console.log(` API Endpoint: http://localhost:${PORT}/scan`);
+  console.log(` Session Recovery: Enabled (backend/temp_session)`);
   console.log(` Hardware Engine: WIA Primary + TWAIN Fallback`);
   console.log(`====================================================`);
 });

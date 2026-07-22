@@ -65,6 +65,7 @@ class ScannerApp {
     this.initEvents();
     this.initSortable();
     this.loadScanners();
+    this.restoreSession(); // Auto-recover temporary session documents on load
     this.updateUI();
   }
 
@@ -127,6 +128,7 @@ class ScannerApp {
         this.selectedIndex = evt.newIndex;
         this.renderThumbnails();
         this.updatePreview();
+        this.syncSession(); // Sync reordered pages to temp folder
       }
     });
   }
@@ -222,6 +224,44 @@ class ScannerApp {
       console.warn('Scanner enumeration fallback:', err);
       this.scannerSelect.innerHTML = '<option value="wia:canon_g3410">Canon PIXMA G3410 (WIA Auto)</option>';
     }
+  }
+
+  async restoreSession() {
+    try {
+      const res = await fetch(`${this.apiUrl}/session/pages`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.success && data.pages && data.pages.length > 0) {
+        this.pages = data.pages.map((p) => {
+          const page = new DocumentPage(p.id, p.dataUrl, p.width, p.height);
+          page.rotation = p.rotation || 0;
+          return page;
+        });
+        this.selectedIndex = 0;
+        this.renderThumbnails();
+        this.updateUI();
+      }
+    } catch (err) {
+      console.warn('[Session Recovery Error]:', err);
+    }
+  }
+
+  async syncSession() {
+    try {
+      await fetch(`${this.apiUrl}/session/pages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pages: this.pages })
+      });
+    } catch (err) {
+      console.warn('[Session Sync Error]:', err);
+    }
+  }
+
+  async clearSession() {
+    try {
+      await fetch(`${this.apiUrl}/session/clear`, { method: 'POST' });
+    } catch (err) {}
   }
 
   async triggerHardwareScan() {
@@ -326,6 +366,7 @@ class ScannerApp {
       this.selectedIndex = this.pages.length - 1;
       this.renderThumbnails();
       this.updateUI();
+      this.syncSession(); // Background cache page to temp folder
     };
     img.src = dataUrl;
   }
@@ -345,6 +386,7 @@ class ScannerApp {
       page.rotate(delta);
       this.renderThumbnails();
       this.updatePreview();
+      this.syncSession(); // Background cache rotated page to temp folder
     }
   }
 
@@ -356,6 +398,7 @@ class ScannerApp {
       }
       this.renderThumbnails();
       this.updateUI();
+      this.syncSession(); // Background sync deleted page from temp folder
     }
   }
 
@@ -366,6 +409,7 @@ class ScannerApp {
       this.selectedIndex = -1;
       this.renderThumbnails();
       this.updateUI();
+      this.clearSession(); // Clean temporary disk session folder
     }
   }
 
