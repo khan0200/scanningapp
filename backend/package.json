@@ -1,0 +1,13 @@
+{
+  "name": "naps2-web-scanner-backend",
+  "version": "1.0.0",
+  "description": "Node.js Native WIA & TWAIN Scanner Bridge Server for Canon G3410 and Windows Scanners",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5"
+  }
+}
