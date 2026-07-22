@@ -100,16 +100,14 @@ namespace NativeWiaScanner
                 int paperSourceVal = source.Equals("ADF", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
                 try { device.Properties["3088"].Value = paperSourceVal; } catch {}
 
-                // 2. Color Intent (6146) & DataType (4103) MUST BE SET BEFORE RESOLUTION
-                int intent = 1;   // 1 = Color, 2 = Grayscale, 4 = BW
-                int dataType = 2; // 2 = Color, 1 = Grayscale, 0 = BW
-                if (colorMode.Equals("Grayscale", StringComparison.OrdinalIgnoreCase)) { intent = 2; dataType = 1; }
-                if (colorMode.Equals("Black & White", StringComparison.OrdinalIgnoreCase) || colorMode.Equals("BW", StringComparison.OrdinalIgnoreCase)) { intent = 4; dataType = 0; }
+                // 2. Color Intent (6146): 1=Color, 2=Grayscale, 4=BW (Do not force 4103 to prevent faint gamma)
+                int intent = 1; // 1 = Color, 2 = Grayscale, 4 = BW
+                if (colorMode.Equals("Grayscale", StringComparison.OrdinalIgnoreCase)) { intent = 2; }
+                if (colorMode.Equals("Black & White", StringComparison.OrdinalIgnoreCase) || colorMode.Equals("BW", StringComparison.OrdinalIgnoreCase)) { intent = 4; }
 
                 try { item.Properties["6146"].Value = intent; } catch {}
-                try { item.Properties["4103"].Value = dataType; } catch {}
 
-                // 3. Resolution (Horizontal=6147, Vertical=6148) MUST BE SET AFTER INTENT TO OVERRIDE INTENT DEFAULT
+                // 3. Resolution (Horizontal=6147, Vertical=6148)
                 try { item.Properties["6147"].Value = dpi; } catch {}
                 try { item.Properties["6148"].Value = dpi; } catch {}
 
