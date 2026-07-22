@@ -48,13 +48,16 @@ class ImageProcessor {
   }
 
   /**
-   * Automatic Document Deskew / Straighten Algorithm (Sobel Edge + Radon Projection)
+   * Automatic Document Deskew Algorithm
+   * Uses Sobel edge detection + Hough line voting to find the dominant
+   * rotation angle of content (works for text pages AND objects on white bg).
    */
   static deskewDataUrl(dataUrl) {
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
-        const maxDim = 800;
+        // Work at a capped resolution for speed
+        const maxDim = 900;
         const scale = Math.min(1.0, maxDim / Math.max(img.width, img.height));
         const w = Math.round(img.width * scale);
         const h = Math.round(img.height * scale);
@@ -68,74 +71,113 @@ class ImageProcessor {
         const imgData = ctx.getImageData(0, 0, w, h);
         const pixels = imgData.data;
 
-        // Sobel Horizontal Edge Filter (detects printed text row boundaries)
-        const edges = new Uint8Array(w * h);
-        for (let y = 1; y < h - 1; y += 2) {
-          for (let x = 1; x < w - 1; x += 2) {
-            const idxAbove = ((y - 1) * w + x) * 4;
-            const idxBelow = ((y + 1) * w + x) * 4;
+        // --- Step 1: Sobel edge detection (full Gx + Gy magnitude) ---
+        const lum = new Float32Array(w * h);
+        for (let i = 0; i < w * h; i++) {
+          lum[i] = 0.299 * pixels[i * 4] + 0.587 * pixels[i * 4 + 1] + 0.114 * pixels[i * 4 + 2];
+        }
 
-            const lumAbove = 0.299 * pixels[idxAbove] + 0.587 * pixels[idxAbove + 1] + 0.114 * pixels[idxAbove + 2];
-            const lumBelow = 0.299 * pixels[idxBelow] + 0.587 * pixels[idxBelow + 1] + 0.114 * pixels[idxBelow + 2];
+        const edgeX = [];   // edge pixel X coords
+        const edgeY = [];   // edge pixel Y coords
 
-            const gy = Math.abs(lumBelow - lumAbove);
-            edges[y * w + x] = gy > 25 ? 1 : 0;
+        const EDGE_THRESHOLD = 30;
+        for (let y = 1; y < h - 1; y++) {
+          for (let x = 1; x < w - 1; x++) {
+            const gx =
+              -lum[(y - 1) * w + (x - 1)] - 2 * lum[y * w + (x - 1)] - lum[(y + 1) * w + (x - 1)] +
+               lum[(y - 1) * w + (x + 1)] + 2 * lum[y * w + (x + 1)] + lum[(y + 1) * w + (x + 1)];
+            const gy =
+              -lum[(y - 1) * w + (x - 1)] - 2 * lum[(y - 1) * w + x] - lum[(y - 1) * w + (x + 1)] +
+               lum[(y + 1) * w + (x - 1)] + 2 * lum[(y + 1) * w + x] + lum[(y + 1) * w + (x + 1)];
+            const mag = Math.sqrt(gx * gx + gy * gy);
+            if (mag > EDGE_THRESHOLD) {
+              edgeX.push(x);
+              edgeY.push(y);
+            }
           }
         }
 
-        // Radon Projection Profile Variance across -15° to +15° in 0.25° steps
-        let maxVariance = -1;
-        let bestAngle = 0;
+        if (edgeX.length < 20) {
+          // Not enough edges — return original unchanged
+          resolve({ dataUrl, width: img.width, height: img.height, angle: 0 });
+          return;
+        }
 
-        for (let angle = -15.0; angle <= 15.0; angle += 0.25) {
-          const rad = (angle * Math.PI) / 180;
+        // --- Step 2: Hough accumulator over angles -20° to +20° ---
+        // For each candidate angle θ, project every edge pixel onto the axis
+        // perpendicular to θ and accumulate. The angle whose projection profile
+        // has the HIGHEST variance has the most aligned edges = the skew angle.
+        const ANGLE_MIN  = -20;
+        const ANGLE_MAX  =  20;
+        const ANGLE_STEP =  0.25;
+
+        const cx = w / 2;
+        const cy = h / 2;
+
+        let bestAngle = 0;
+        let bestScore = -1;
+
+        // Subsample edges so we don't blow up on large images
+        const MAX_EDGES = 3000;
+        let step = Math.max(1, Math.floor(edgeX.length / MAX_EDGES));
+
+        for (let angleDeg = ANGLE_MIN; angleDeg <= ANGLE_MAX; angleDeg += ANGLE_STEP) {
+          const rad = (angleDeg * Math.PI) / 180;
           const cos = Math.cos(rad);
           const sin = Math.sin(rad);
 
-          const profile = new Float32Array(h);
+          // Project edge pixels along the direction perpendicular to this angle
+          // i.e. accumulate into "horizontal bands" rotated by angleDeg
+          const bins = new Float32Array(h + 2);
 
-          for (let y = 4; y < h - 4; y += 3) {
-            for (let x = 4; x < w - 4; x += 3) {
-              if (edges[y * w + x]) {
-                const rotY = Math.round(-x * sin + y * cos);
-                if (rotY >= 0 && rotY < h) {
-                  profile[rotY]++;
-                }
-              }
-            }
+          for (let i = 0; i < edgeX.length; i += step) {
+            const dx = edgeX[i] - cx;
+            const dy = edgeY[i] - cy;
+            // y-coordinate in the rotated frame (this is the "row" after deskew)
+            const projY = Math.round(-dx * sin + dy * cos + cy);
+            if (projY >= 0 && projY < bins.length) bins[projY]++;
           }
 
-          let mean = 0;
-          for (let i = 0; i < h; i++) mean += profile[i];
-          mean /= h;
-
+          // Score = variance of the bin counts (sharp lines → high variance)
+          let sum = 0, cnt = 0;
+          for (let b = 0; b < bins.length; b++) { sum += bins[b]; cnt++; }
+          const mean = sum / cnt;
           let variance = 0;
-          for (let i = 0; i < h; i++) {
-            const diff = profile[i] - mean;
-            variance += diff * diff;
+          for (let b = 0; b < bins.length; b++) {
+            const d = bins[b] - mean;
+            variance += d * d;
           }
 
-          if (variance > maxVariance) {
-            maxVariance = variance;
-            bestAngle = angle;
+          if (variance > bestScore) {
+            bestScore = variance;
+            bestAngle = angleDeg;
           }
         }
 
-        const rad = (-bestAngle * Math.PI) / 180;
+        // bestAngle is the detected skew; correction = -bestAngle
+        const correctionDeg = -bestAngle;
+
+        if (Math.abs(correctionDeg) < 0.15) {
+          resolve({ dataUrl, width: img.width, height: img.height, angle: 0 });
+          return;
+        }
+
+        // --- Step 3: Rotate the ORIGINAL full-resolution image ---
+        const rad = (correctionDeg * Math.PI) / 180;
         const absCos = Math.abs(Math.cos(rad));
         const absSin = Math.abs(Math.sin(rad));
 
-        const rotW = Math.round(img.width * absCos + img.height * absSin);
-        const rotH = Math.round(img.width * absSin + img.height * absCos);
+        // Bounding box that fully contains the rotated image (no clipping)
+        const rotW = Math.ceil(img.width * absCos + img.height * absSin);
+        const rotH = Math.ceil(img.width * absSin + img.height * absCos);
 
         const rotCanvas = document.createElement('canvas');
-        rotCanvas.width = rotW;
+        rotCanvas.width  = rotW;
         rotCanvas.height = rotH;
         const rotCtx = rotCanvas.getContext('2d');
 
         rotCtx.fillStyle = '#ffffff';
         rotCtx.fillRect(0, 0, rotW, rotH);
-
         rotCtx.translate(rotW / 2, rotH / 2);
         rotCtx.rotate(rad);
         rotCtx.drawImage(img, -img.width / 2, -img.height / 2);
@@ -144,12 +186,13 @@ class ImageProcessor {
           dataUrl: rotCanvas.toDataURL('image/jpeg', 0.94),
           width: rotW,
           height: rotH,
-          angle: -bestAngle
+          angle: correctionDeg
         });
       };
       img.src = dataUrl;
     });
   }
+
 
   /**
    * Crop image canvas to pixel coordinates
@@ -187,6 +230,9 @@ class ScannerApp {
     this.scanners = [];
     this.scanModalInstance = null;
     this.cropModalInstance = null;
+    this.historyStack = [];
+    this.redoStack = [];
+    this.maxHistory = 30;
 
     const isNativeHost = window.location.port === '3000';
     this.apiUrl = isNativeHost ? '' : 'http://localhost:3000';
@@ -211,13 +257,17 @@ class ScannerApp {
     this.sourceSelect = document.getElementById('sourceSelect');
     this.paperSelect = document.getElementById('paperSelect');
 
-    // Page editing buttons
+    // Page editing & history buttons
+    this.btnUndo = document.getElementById('btnUndo');
+    this.btnRedo = document.getElementById('btnRedo');
     this.btnAddImage = document.getElementById('btnAddImage');
+    this.btnImportPdf = document.getElementById('btnImportPdf');
     this.btnDeskew = document.getElementById('btnDeskew');
     this.btnCrop = document.getElementById('btnCrop');
     this.btnRotateLeft = document.getElementById('btnRotateLeft');
     this.btnRotateRight = document.getElementById('btnRotateRight');
     this.btnDelete = document.getElementById('btnDelete');
+    this.btnExportMenu = document.getElementById('btnExportMenu');
     this.btnSavePdf = document.getElementById('btnSavePdf');
     this.btnSaveJpg = document.getElementById('btnSaveJpg');
     this.btnClearAll = document.getElementById('btnClearAll');
@@ -264,14 +314,89 @@ class ScannerApp {
       handle: '.thumbnail-drag-handle',
       ghostClass: 'thumbnail-ghost',
       onEnd: (evt) => {
-        const movedItem = this.pages.splice(evt.oldIndex, 1)[0];
-        this.pages.splice(evt.newIndex, 0, movedItem);
-        this.selectedIndex = evt.newIndex;
-        this.renderThumbnails();
-        this.updatePreview();
-        this.syncSession();
+        if (evt.oldIndex !== evt.newIndex) {
+          this.saveHistoryState();
+          const movedItem = this.pages.splice(evt.oldIndex, 1)[0];
+          this.pages.splice(evt.newIndex, 0, movedItem);
+          this.selectedIndex = evt.newIndex;
+          this.renderThumbnails();
+          this.updatePreview();
+          this.syncSession();
+        }
       }
     });
+  }
+
+  createSnapshot() {
+    return {
+      pages: this.pages.map((p) => {
+        const page = new DocumentPage(p.id, p.dataUrl, p.width, p.height);
+        page.rotation = p.rotation || 0;
+        return page;
+      }),
+      selectedIndex: this.selectedIndex
+    };
+  }
+
+  saveHistoryState() {
+    const snapshot = this.createSnapshot();
+    this.historyStack.push(snapshot);
+    if (this.historyStack.length > this.maxHistory) {
+      this.historyStack.shift();
+    }
+    this.redoStack = [];
+    this.updateUndoRedoUI();
+  }
+
+  undo() {
+    if (this.historyStack.length === 0) return;
+    const currentSnapshot = this.createSnapshot();
+    this.redoStack.push(currentSnapshot);
+
+    const previousState = this.historyStack.pop();
+    this.pages = previousState.pages.map((p) => {
+      const page = new DocumentPage(p.id, p.dataUrl, p.width, p.height);
+      page.rotation = p.rotation || 0;
+      return page;
+    });
+    this.selectedIndex = previousState.selectedIndex;
+    if (this.selectedIndex >= this.pages.length) {
+      this.selectedIndex = this.pages.length - 1;
+    }
+
+    this.renderThumbnails();
+    this.updateUI();
+    this.syncSession();
+    this.updateUndoRedoUI();
+    this.showAlert('Undo performed.', false);
+  }
+
+  redo() {
+    if (this.redoStack.length === 0) return;
+    const currentSnapshot = this.createSnapshot();
+    this.historyStack.push(currentSnapshot);
+
+    const nextState = this.redoStack.pop();
+    this.pages = nextState.pages.map((p) => {
+      const page = new DocumentPage(p.id, p.dataUrl, p.width, p.height);
+      page.rotation = p.rotation || 0;
+      return page;
+    });
+    this.selectedIndex = nextState.selectedIndex;
+    if (this.selectedIndex >= this.pages.length) {
+      this.selectedIndex = this.pages.length - 1;
+    }
+
+    this.renderThumbnails();
+    this.updateUI();
+    this.syncSession();
+    this.updateUndoRedoUI();
+    this.showAlert('Redo performed.', false);
+  }
+
+  updateUndoRedoUI() {
+    if (this.btnUndo) this.btnUndo.disabled = this.historyStack.length === 0;
+    if (this.btnRedo) this.btnRedo.disabled = this.redoStack.length === 0;
   }
 
   initCropTool() {
@@ -292,21 +417,74 @@ class ScannerApp {
       canvasH: 0
     };
 
+    const BORDER_HIT = 10; // px tolerance for grabbing the border line itself
+
+    // Determine what zone of the crop box a mouse event lands in.
+    // Returns a handle class name string (matching .handle-XX) or 'move'.
+    const getZone = (e) => {
+      const rect = this.cropBox.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const W  = rect.width;
+      const H  = rect.height;
+
+      const onTop    = my >= -BORDER_HIT && my <= BORDER_HIT;
+      const onBottom = my >= H - BORDER_HIT && my <= H + BORDER_HIT;
+      const onLeft   = mx >= -BORDER_HIT && mx <= BORDER_HIT;
+      const onRight  = mx >= W - BORDER_HIT && mx <= W + BORDER_HIT;
+
+      // Corners first (wider priority zone)
+      if (onTop    && onLeft)  return 'handle-nw';
+      if (onTop    && onRight) return 'handle-ne';
+      if (onBottom && onRight) return 'handle-se';
+      if (onBottom && onLeft)  return 'handle-sw';
+      // Edges
+      if (onTop)    return 'handle-n';
+      if (onBottom) return 'handle-s';
+      if (onRight)  return 'handle-e';
+      if (onLeft)   return 'handle-w';
+      // Interior
+      return 'move';
+    };
+
+    const cursorFor = (zone) => {
+      switch (zone) {
+        case 'handle-nw': case 'handle-se': return 'nwse-resize';
+        case 'handle-ne': case 'handle-sw': return 'nesw-resize';
+        case 'handle-n':  case 'handle-s':  return 'ns-resize';
+        case 'handle-e':  case 'handle-w':  return 'ew-resize';
+        default: return 'move';
+      }
+    };
+
+    // Update cursor on hover over the cropBox itself
+    this.cropBox.addEventListener('mousemove', (e) => {
+      if (this.cropState.isDragging) return;
+      if (e.target.classList.contains('crop-handle')) return;
+      const zone = getZone(e);
+      this.cropBox.style.cursor = cursorFor(zone);
+    });
+
+    // Corner & edge handle mousedown
     const handles = this.cropBox.querySelectorAll('.crop-handle');
     handles.forEach((handle) => {
       handle.addEventListener('mousedown', (e) => {
         e.stopPropagation();
+        // Derive the zone from the handle class list (e.g. "crop-handle handle-se")
+        const cls = Array.from(handle.classList).find((c) => c.startsWith('handle-'));
         this.cropState.isDragging = true;
-        this.cropState.activeHandle = handle.className;
+        this.cropState.activeHandle = cls || 'move';
         this.cropState.startX = e.clientX;
         this.cropState.startY = e.clientY;
       });
     });
 
+    // Border hit-test mousedown (fires when clicking the box body, not a handle)
     this.cropBox.addEventListener('mousedown', (e) => {
       if (e.target.classList.contains('crop-handle')) return;
+      const zone = getZone(e);
       this.cropState.isDragging = true;
-      this.cropState.activeHandle = 'move';
+      this.cropState.activeHandle = zone;
       this.cropState.startX = e.clientX;
       this.cropState.startY = e.clientY;
     });
@@ -316,33 +494,53 @@ class ScannerApp {
 
       const dx = e.clientX - this.cropState.startX;
       const dy = e.clientY - this.cropState.startY;
-
       const maxW = this.cropState.canvasW;
       const maxH = this.cropState.canvasH;
+      const h    = this.cropState.activeHandle;
 
-      if (this.cropState.activeHandle === 'move') {
+      if (h === 'move') {
         this.cropState.boxX = Math.max(0, Math.min(maxW - this.cropState.boxW, this.cropState.boxX + dx));
         this.cropState.boxY = Math.max(0, Math.min(maxH - this.cropState.boxH, this.cropState.boxY + dy));
-      } else if (this.cropState.activeHandle.includes('handle-se')) {
+
+      } else if (h === 'handle-se') {
         this.cropState.boxW = Math.max(20, Math.min(maxW - this.cropState.boxX, this.cropState.boxW + dx));
         this.cropState.boxH = Math.max(20, Math.min(maxH - this.cropState.boxY, this.cropState.boxH + dy));
-      } else if (this.cropState.activeHandle.includes('handle-sw')) {
+
+      } else if (h === 'handle-sw') {
         const newW = Math.max(20, this.cropState.boxW - dx);
         this.cropState.boxX = Math.max(0, this.cropState.boxX + (this.cropState.boxW - newW));
         this.cropState.boxW = newW;
         this.cropState.boxH = Math.max(20, Math.min(maxH - this.cropState.boxY, this.cropState.boxH + dy));
-      } else if (this.cropState.activeHandle.includes('handle-ne')) {
+
+      } else if (h === 'handle-ne') {
         this.cropState.boxW = Math.max(20, Math.min(maxW - this.cropState.boxX, this.cropState.boxW + dx));
         const newH = Math.max(20, this.cropState.boxH - dy);
         this.cropState.boxY = Math.max(0, this.cropState.boxY + (this.cropState.boxH - newH));
         this.cropState.boxH = newH;
-      } else if (this.cropState.activeHandle.includes('handle-nw')) {
+
+      } else if (h === 'handle-nw') {
         const newW = Math.max(20, this.cropState.boxW - dx);
         this.cropState.boxX = Math.max(0, this.cropState.boxX + (this.cropState.boxW - newW));
         this.cropState.boxW = newW;
         const newH = Math.max(20, this.cropState.boxH - dy);
         this.cropState.boxY = Math.max(0, this.cropState.boxY + (this.cropState.boxH - newH));
         this.cropState.boxH = newH;
+
+      } else if (h === 'handle-n') {
+        const newH = Math.max(20, this.cropState.boxH - dy);
+        this.cropState.boxY = Math.max(0, this.cropState.boxY + (this.cropState.boxH - newH));
+        this.cropState.boxH = newH;
+
+      } else if (h === 'handle-s') {
+        this.cropState.boxH = Math.max(20, Math.min(maxH - this.cropState.boxY, this.cropState.boxH + dy));
+
+      } else if (h === 'handle-e') {
+        this.cropState.boxW = Math.max(20, Math.min(maxW - this.cropState.boxX, this.cropState.boxW + dx));
+
+      } else if (h === 'handle-w') {
+        const newW = Math.max(20, this.cropState.boxW - dx);
+        this.cropState.boxX = Math.max(0, this.cropState.boxX + (this.cropState.boxW - newW));
+        this.cropState.boxW = newW;
       }
 
       this.cropState.startX = e.clientX;
@@ -353,12 +551,12 @@ class ScannerApp {
     window.addEventListener('mouseup', () => {
       this.cropState.isDragging = false;
       this.cropState.activeHandle = null;
+      this.cropBox.style.cursor = 'move';
     });
 
     if (this.btnResetCrop) {
       this.btnResetCrop.addEventListener('click', () => this.resetCropBox());
     }
-
     if (this.btnApplyCrop) {
       this.btnApplyCrop.addEventListener('click', () => this.applyCrop());
     }
@@ -445,6 +643,7 @@ class ScannerApp {
     try {
       const result = await ImageProcessor.cropDataUrl(rotatedDataUrl, cropX, cropY, cropW, cropH);
       if (result && result.dataUrl) {
+        this.saveHistoryState();
         page.dataUrl = result.dataUrl;
         page.width = result.width;
         page.height = result.height;
@@ -467,6 +666,13 @@ class ScannerApp {
 
   initEvents() {
     // Toolbar events
+    if (this.btnUndo) {
+      this.btnUndo.addEventListener('click', () => this.undo());
+    }
+    if (this.btnRedo) {
+      this.btnRedo.addEventListener('click', () => this.redo());
+    }
+
     this.btnRefreshScanners.addEventListener('click', () => this.loadScanners());
     this.btnScan.addEventListener('click', () => this.triggerHardwareScan());
     this.btnStopScan.addEventListener('click', () => this.abortScan());
@@ -475,6 +681,10 @@ class ScannerApp {
     }
     this.btnAddImage.addEventListener('click', () => this.fileInput.click());
     this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+
+    if (this.btnImportPdf) {
+      this.btnImportPdf.addEventListener('click', () => this.importPdf());
+    }
 
     this.scannerSelect.addEventListener('change', () => {
       localStorage.setItem('naps2_selected_scanner', this.scannerSelect.value);
@@ -488,7 +698,9 @@ class ScannerApp {
     }
     this.btnRotateLeft.addEventListener('click', () => this.rotateSelected(-90));
     this.btnRotateRight.addEventListener('click', () => this.rotateSelected(90));
-    this.btnDelete.addEventListener('click', () => this.deleteSelected());
+    if (this.btnDelete) {
+      this.btnDelete.addEventListener('click', () => this.deleteSelected());
+    }
     this.btnClearAll.addEventListener('click', () => this.clearAll());
 
     this.btnSavePdf.addEventListener('click', () => this.exportPdf());
@@ -507,24 +719,48 @@ class ScannerApp {
     window.addEventListener('drop', (e) => {
       e.preventDefault();
       if (e.dataTransfer && e.dataTransfer.files.length) {
-        const files = Array.from(e.dataTransfer.files);
-        files.forEach((file) => {
-          if (file.type.startsWith('image/')) {
+        const allFiles = Array.from(e.dataTransfer.files);
+        const imgFiles = allFiles.filter((f) => f.type.startsWith('image/'));
+        const pdfFiles = allFiles.filter((f) => f.type === 'application/pdf');
+        if (imgFiles.length > 0) {
+          this.saveHistoryState();
+          imgFiles.forEach((file) => {
             const reader = new FileReader();
-            reader.onload = (event) => this.addPage(event.target.result);
+            reader.onload = (event) => this.addPage(event.target.result, true);
             reader.readAsDataURL(file);
-          }
+          });
+        }
+        pdfFiles.forEach((file) => {
+          const reader = new FileReader();
+          reader.onload = (event) => this.importPdfFromArrayBuffer(event.target.result);
+          reader.readAsArrayBuffer(file);
         });
       }
     });
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Delete' && this.selectedIndex >= 0) {
+      const active = document.activeElement;
+      const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT');
+
+      if ((e.ctrlKey || e.metaKey) && !isInput) {
+        const key = e.key.toLowerCase();
+        if (key === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) {
+            this.redo();
+          } else {
+            this.undo();
+          }
+        } else if (key === 'y') {
+          e.preventDefault();
+          this.redo();
+        }
+      } else if (e.key === 'Delete' && this.selectedIndex >= 0 && !isInput) {
         this.deleteSelected();
-      } else if (e.key === 'ArrowUp' && this.selectedIndex > 0) {
+      } else if (e.key === 'ArrowUp' && this.selectedIndex > 0 && !isInput) {
         this.selectPage(this.selectedIndex - 1);
-      } else if (e.key === 'ArrowDown' && this.selectedIndex < this.pages.length - 1) {
+      } else if (e.key === 'ArrowDown' && this.selectedIndex < this.pages.length - 1 && !isInput) {
         this.selectPage(this.selectedIndex + 1);
       }
     });
@@ -641,7 +877,8 @@ class ScannerApp {
       this.resetScanUI();
 
       if (data.success && data.pages && data.pages.length > 0) {
-        data.pages.forEach((dataUrl) => this.addPage(dataUrl));
+        this.saveHistoryState();
+        data.pages.forEach((dataUrl) => this.addPage(dataUrl, true));
       } else if (data.cancelled) {
         // User cancelled scan dialog
       } else {
@@ -695,7 +932,10 @@ class ScannerApp {
     this.alertBanner.classList.add('hidden-input');
   }
 
-  addPage(dataUrl) {
+  addPage(dataUrl, skipHistory = false) {
+    if (!skipHistory) {
+      this.saveHistoryState();
+    }
     const img = new Image();
     img.onload = () => {
       const page = new DocumentPage(null, dataUrl, img.width, img.height);
@@ -745,11 +985,14 @@ class ScannerApp {
     }
 
     try {
-      const result = await ImageProcessor.deskewDataUrl(page.dataUrl);
+      const rotatedDataUrl = await ImageProcessor.getRotatedDataUrl(page.dataUrl, page.rotation);
+      const result = await ImageProcessor.deskewDataUrl(rotatedDataUrl);
       if (result && result.dataUrl) {
+        this.saveHistoryState();
         page.dataUrl = result.dataUrl;
         page.width = result.width;
         page.height = result.height;
+        page.rotation = 0; // Reset visual rotation since it's now baked into dataUrl
         this.renderThumbnails();
         this.updatePreview();
         this.syncSession();
@@ -771,6 +1014,7 @@ class ScannerApp {
 
   rotateSelected(delta) {
     if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
+      this.saveHistoryState();
       const page = this.pages[this.selectedIndex];
       page.rotate(delta);
 
@@ -789,6 +1033,7 @@ class ScannerApp {
 
   deleteSelected() {
     if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
+      this.saveHistoryState();
       this.pages.splice(this.selectedIndex, 1);
       if (this.selectedIndex >= this.pages.length) {
         this.selectedIndex = this.pages.length - 1;
@@ -799,9 +1044,29 @@ class ScannerApp {
     }
   }
 
+  deletePage(index) {
+    if (index >= 0 && index < this.pages.length) {
+      if (confirm(`Are you sure you want to delete Page ${index + 1}?`)) {
+        this.saveHistoryState();
+        this.pages.splice(index, 1);
+        if (this.selectedIndex === index) {
+          if (this.selectedIndex >= this.pages.length) {
+            this.selectedIndex = this.pages.length - 1;
+          }
+        } else if (this.selectedIndex > index) {
+          this.selectedIndex--;
+        }
+        this.renderThumbnails();
+        this.updateUI();
+        this.syncSession();
+      }
+    }
+  }
+
   clearAll() {
     if (this.pages.length === 0) return;
     if (confirm('Are you sure you want to clear all document pages?')) {
+      this.saveHistoryState();
       this.pages = [];
       this.selectedIndex = -1;
       this.renderThumbnails();
@@ -825,7 +1090,7 @@ class ScannerApp {
       item.addEventListener('click', () => this.selectPage(idx));
 
       item.innerHTML = `
-        <div class="d-flex align-items-center gap-2">
+        <div class="d-flex align-items-center gap-2 w-100">
           <div class="thumbnail-drag-handle px-1" title="Drag to reorder">
             <i class="bi bi-grip-vertical fs-5"></i>
           </div>
@@ -833,12 +1098,23 @@ class ScannerApp {
           <div class="thumbnail-img-box">
             <img class="thumbnail-img" src="${page.dataUrl}" style="transform: rotate(${page.rotation}deg)">
           </div>
-          <div class="d-flex flex-column text-truncate">
+          <div class="d-flex flex-column text-truncate" style="flex: 1;">
             <span class="fw-bold small text-dark">Page ${idx + 1}</span>
             <span class="text-muted thumbnail-meta-text" style="font-size: 10px;">${page.width} × ${page.height} px ${page.rotation ? `(${page.rotation}°)` : ''}</span>
           </div>
+          <button class="btn btn-sm btn-link text-danger p-1 btn-delete-thumbnail" title="Delete Page" style="text-decoration: none;">
+            <i class="bi bi-trash fs-6"></i>
+          </button>
         </div>
       `;
+
+      const delBtn = item.querySelector('.btn-delete-thumbnail');
+      if (delBtn) {
+        delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.deletePage(idx);
+        });
+      }
 
       this.thumbnailList.appendChild(item);
     });
@@ -874,24 +1150,26 @@ class ScannerApp {
     if (this.btnCrop) this.btnCrop.disabled = !hasSelection;
     this.btnRotateLeft.disabled = !hasSelection;
     this.btnRotateRight.disabled = !hasSelection;
-    this.btnDelete.disabled = !hasSelection;
-    this.btnSavePdf.disabled = !hasPages;
-    this.btnSaveJpg.disabled = !hasSelection;
+    if (this.btnDelete) this.btnDelete.disabled = !hasSelection;
+    if (this.btnExportMenu) this.btnExportMenu.disabled = !hasPages;
+    if (this.btnSavePdf) this.btnSavePdf.disabled = !hasPages;
+    if (this.btnSaveJpg) this.btnSaveJpg.disabled = !hasSelection;
     this.btnClearAll.disabled = !hasPages;
+
+    this.updateUndoRedoUI();
   }
 
   handleFileSelect(e) {
-    const files = Array.from(e.target.files);
+    const files = Array.from(e.target.files).filter((f) => f.type.startsWith('image/'));
     if (!files.length) return;
 
+    this.saveHistoryState();
     files.forEach((file) => {
-      if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          this.addPage(event.target.result);
-        };
-        reader.readAsDataURL(file);
-      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        this.addPage(event.target.result, true);
+      };
+      reader.readAsDataURL(file);
     });
 
     this.fileInput.value = '';
@@ -934,8 +1212,10 @@ class ScannerApp {
 
     pdf.save('Scanned_Document_' + new Date().toISOString().slice(0, 10) + '.pdf');
 
-    this.btnSavePdf.disabled = false;
-    this.btnSavePdf.innerHTML = `<i class="bi bi-file-earmark-pdf me-1"></i>Save PDF`;
+    if (this.btnSavePdf) {
+      this.btnSavePdf.disabled = false;
+      this.btnSavePdf.innerHTML = `<i class="bi bi-file-earmark-pdf text-danger"></i> <span>Save PDF</span> <small class="text-muted ms-auto">All pages</small>`;
+    }
   }
 
   async exportJpg() {
@@ -950,6 +1230,80 @@ class ScannerApp {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+  }
+
+  /**
+   * Let the user pick a PDF file and import all its pages as images.
+   * Uses PDF.js (loaded via CDN) to render each page to a canvas.
+   */
+  importPdf() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/pdf';
+    input.multiple = true;
+    input.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files);
+      for (const file of files) {
+        const buffer = await file.arrayBuffer();
+        await this.importPdfFromArrayBuffer(buffer);
+      }
+    });
+    input.click();
+  }
+
+  async importPdfFromArrayBuffer(buffer) {
+    // Dynamically load PDF.js if not already present
+    if (!window.pdfjsLib) {
+      try {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+          script.onload = () => {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+              'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            resolve();
+          };
+          script.onerror = reject;
+          document.head.appendChild(script);
+        });
+      } catch (e) {
+        this.showAlert('PDF.js library failed to load. Cannot import PDF.', true);
+        return;
+      }
+    }
+
+    try {
+      const pdfjsLib = window.pdfjsLib;
+      const typedArray = new Uint8Array(buffer);
+      const pdfDoc = await pdfjsLib.getDocument({ data: typedArray }).promise;
+      const totalPages = pdfDoc.numPages;
+
+      this.showAlert(`Importing PDF — ${totalPages} page${totalPages === 1 ? '' : 's'}...`, false);
+      this.saveHistoryState();
+
+      const SCALE = 2.0; // 2× gives ~150–200 DPI equivalent
+      for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+        const pdfPage = await pdfDoc.getPage(pageNum);
+        const viewport = pdfPage.getViewport({ scale: SCALE });
+
+        const canvas = document.createElement('canvas');
+        canvas.width  = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+
+        await pdfPage.render({
+          canvasContext: canvas.getContext('2d'),
+          viewport
+        }).promise;
+
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+        this.addPage(dataUrl, true);
+      }
+
+      this.showAlert(`PDF imported — ${totalPages} page${totalPages === 1 ? '' : 's'} added.`, false);
+    } catch (err) {
+      console.error('PDF import error:', err);
+      this.showAlert(`PDF import failed: ${err.message}`, true);
+    }
   }
 }
 

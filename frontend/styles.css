@@ -33,6 +33,15 @@ body {
   color: #6c757d;
 }
 
+.btn-delete-thumbnail {
+  opacity: 0.4;
+  transition: opacity 0.15s ease-in-out;
+}
+
+.btn-delete-thumbnail:hover {
+  opacity: 1 !important;
+}
+
 .thumbnail-img-box {
   width: 54px;
   height: 72px;
@@ -125,4 +134,27 @@ body {
 @keyframes laserScan {
   0% { top: 12%; }
   100% { top: 88%; }
+}
+
+/* Disabled dropdown items (Features / Settings menus) */
+.dropdown-menu .dropdown-item:disabled,
+.dropdown-menu .dropdown-item[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+/* Keep Settings / Features dropdowns open on select change */
+.dropdown-menu.keep-open {
+  display: block;
+}
+
+/* Spin animation for deskew loading state */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.spin-icon {
+  display: inline-block;
+  animation: spin 0.8s linear infinite;
 }

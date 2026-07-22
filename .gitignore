@@ -11,3 +11,7 @@ yarn-error.log*
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Project Temp Session & Test PDFs
+backend/temp_session/
+*.pdf

@@ -56,76 +56,162 @@
 
       <div class="vr mx-1 d-none d-md-block" style="height: 24px;"></div>
 
-      <!-- Scan Parameters Settings -->
-      <div class="d-flex align-items-center gap-1">
-        <span class="form-label mb-0 fw-bold text-secondary small text-uppercase">DPI:</span>
-        <select id="dpiSelect" class="form-select form-select-sm">
-          <option value="150">150 DPI</option>
-          <option value="300" selected>300 DPI</option>
-          <option value="600">600 DPI</option>
-        </select>
-      </div>
+      <!-- Scan Settings Dropdown -->
+      <div class="dropdown">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle d-flex align-items-center gap-1" type="button" id="btnScanSettings" data-bs-toggle="dropdown" aria-expanded="false" title="Scan Settings">
+          <i class="bi bi-sliders"></i>
+          <span>Settings</span>
+        </button>
+        <div class="dropdown-menu p-3 shadow" style="min-width: 240px;" aria-labelledby="btnScanSettings">
+          <h6 class="dropdown-header px-0 pb-2 mb-2 border-bottom fw-bold text-uppercase small">Scan Parameters</h6>
 
-      <div class="d-flex align-items-center gap-1">
-        <span class="form-label mb-0 fw-bold text-secondary small text-uppercase">Color:</span>
-        <select id="colorSelect" class="form-select form-select-sm">
-          <option value="Color" selected>Color</option>
-          <option value="Grayscale">Grayscale</option>
-          <option value="Black & White">Black & White</option>
-        </select>
-      </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold text-secondary small text-uppercase mb-1" for="dpiSelect">Resolution (DPI)</label>
+            <select id="dpiSelect" class="form-select form-select-sm">
+              <option value="150">150 DPI — Draft</option>
+              <option value="300" selected>300 DPI — Standard</option>
+              <option value="600">600 DPI — High Quality</option>
+            </select>
+          </div>
 
-      <div class="d-flex align-items-center gap-1 hidden-input">
-        <span class="form-label mb-0 fw-bold text-secondary small text-uppercase">Source:</span>
-        <select id="sourceSelect" class="form-select form-select-sm">
-          <option value="Flatbed" selected>Flatbed</option>
-          <option value="ADF">ADF (Feeder)</option>
-        </select>
-      </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold text-secondary small text-uppercase mb-1" for="colorSelect">Color Mode</label>
+            <select id="colorSelect" class="form-select form-select-sm">
+              <option value="Color" selected>Color</option>
+              <option value="Grayscale">Grayscale</option>
+              <option value="Black &amp; White">Black &amp; White</option>
+            </select>
+          </div>
 
-      <div class="d-flex align-items-center gap-1">
-        <span class="form-label mb-0 fw-bold text-secondary small text-uppercase">Paper:</span>
-        <select id="paperSelect" class="form-select form-select-sm">
-          <option value="A4" selected>A4</option>
-          <option value="Letter">Letter</option>
-          <option value="Auto">Auto Detect</option>
-        </select>
+          <div class="mb-3">
+            <label class="form-label fw-bold text-secondary small text-uppercase mb-1" for="sourceSelect">Source</label>
+            <select id="sourceSelect" class="form-select form-select-sm">
+              <option value="Flatbed" selected>Flatbed</option>
+              <option value="ADF">ADF (Feeder)</option>
+            </select>
+          </div>
+
+          <div class="mb-0">
+            <label class="form-label fw-bold text-secondary small text-uppercase mb-1" for="paperSelect">Paper Size</label>
+            <select id="paperSelect" class="form-select form-select-sm">
+              <option value="A4" selected>A4</option>
+              <option value="Letter">Letter</option>
+              <option value="Auto">Auto Detect</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       <div class="vr mx-1 d-none d-md-block" style="height: 24px;"></div>
 
       <!-- Image Import & Editing Actions -->
       <div class="d-flex align-items-center gap-1">
-        <button class="btn btn-outline-secondary btn-sm" id="btnAddImage" title="Add Image File">
-          <i class="bi bi-file-earmark-plus me-1"></i>Add Image
+        <button class="btn btn-outline-secondary btn-sm" id="btnUndo" disabled title="Undo Last Action (Ctrl+Z)">
+          <i class="bi bi-arrow-return-left me-1"></i>Undo
         </button>
-        <button class="btn btn-outline-primary btn-sm" id="btnDeskew" disabled title="Auto Deskew / Straighten Crooked Scan">
-          <i class="bi bi-magic me-1"></i>Auto Deskew
+        <button class="btn btn-outline-secondary btn-sm" id="btnRedo" disabled title="Redo Last Action (Ctrl+Y / Ctrl+Shift+Z)">
+          <i class="bi bi-arrow-return-right me-1"></i>Redo
         </button>
-        <button class="btn btn-outline-primary btn-sm" id="btnCrop" disabled title="Crop Page Region">
-          <i class="bi bi-crop me-1"></i>Crop
-        </button>
-        <button class="btn btn-outline-secondary btn-sm" id="btnRotateLeft" disabled title="Rotate Left 90°">
-          <i class="bi bi-arrow-counterclockwise me-1"></i>Rotate Left
-        </button>
-        <button class="btn btn-outline-secondary btn-sm" id="btnRotateRight" disabled title="Rotate Right 90°">
-          <i class="bi bi-arrow-clockwise me-1"></i>Rotate Right
-        </button>
-        <button class="btn btn-outline-danger btn-sm" id="btnDelete" disabled title="Delete Selected Page">
-          <i class="bi bi-trash me-1"></i>Delete
-        </button>
+        <div class="vr mx-1"></div>
+
+        <!-- Import Dropdown -->
+        <div class="dropdown">
+          <button class="btn btn-outline-secondary btn-sm dropdown-toggle d-flex align-items-center gap-1" type="button" id="btnImportMenu" data-bs-toggle="dropdown" aria-expanded="false" title="Import Files">
+            <i class="bi bi-box-arrow-in-down"></i>
+            <span>Import</span>
+          </button>
+          <ul class="dropdown-menu shadow" aria-labelledby="btnImportMenu">
+            <li><h6 class="dropdown-header small text-uppercase fw-bold">Add Pages</h6></li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnAddImage">
+                <i class="bi bi-file-earmark-image text-secondary"></i>
+                <span>Add Image</span>
+                <small class="text-muted ms-auto">JPG, PNG…</small>
+              </button>
+            </li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnImportPdf">
+                <i class="bi bi-file-earmark-pdf text-danger"></i>
+                <span>Import PDF</span>
+                <small class="text-muted ms-auto">All pages</small>
+              </button>
+            </li>
+          </ul>
+        </div>
+
+
+        <!-- Features Dropdown -->
+        <div class="dropdown">
+          <button class="btn btn-outline-primary btn-sm dropdown-toggle d-flex align-items-center gap-1" type="button" id="btnFeatures" data-bs-toggle="dropdown" aria-expanded="false" title="Page Features">
+            <i class="bi bi-stars"></i>
+            <span>Features</span>
+          </button>
+          <ul class="dropdown-menu shadow" aria-labelledby="btnFeatures">
+            <li><h6 class="dropdown-header small text-uppercase fw-bold">Image Correction</h6></li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnDeskew" disabled>
+                <i class="bi bi-magic text-primary"></i>
+                <span>Auto Deskew</span>
+                <small class="text-muted ms-auto">Straighten</small>
+              </button>
+            </li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnCrop" disabled>
+                <i class="bi bi-crop text-primary"></i>
+                <span>Crop</span>
+                <small class="text-muted ms-auto">Trim page</small>
+              </button>
+            </li>
+            <li><hr class="dropdown-divider"></li>
+            <li><h6 class="dropdown-header small text-uppercase fw-bold">Rotation</h6></li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnRotateLeft" disabled>
+                <i class="bi bi-arrow-counterclockwise text-secondary"></i>
+                <span>Rotate Left</span>
+                <small class="text-muted ms-auto">−90°</small>
+              </button>
+            </li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnRotateRight" disabled>
+                <i class="bi bi-arrow-clockwise text-secondary"></i>
+                <span>Rotate Right</span>
+                <small class="text-muted ms-auto">+90°</small>
+              </button>
+            </li>
+          </ul>
+        </div>
       </div>
 
       <div class="vr mx-1 d-none d-md-block" style="height: 24px;"></div>
 
       <!-- Export Actions -->
       <div class="d-flex align-items-center gap-1 ms-auto">
-        <button class="btn btn-success btn-sm fw-semibold" id="btnSavePdf" disabled>
-          <i class="bi bi-file-earmark-pdf me-1"></i>Save PDF
-        </button>
-        <button class="btn btn-outline-success btn-sm" id="btnSaveJpg" disabled>
-          <i class="bi bi-file-earmark-image me-1"></i>Save JPG
-        </button>
+
+        <!-- Export Dropdown -->
+        <div class="dropdown">
+          <button class="btn btn-success btn-sm fw-semibold dropdown-toggle d-flex align-items-center gap-1" type="button" id="btnExportMenu" data-bs-toggle="dropdown" aria-expanded="false" disabled>
+            <i class="bi bi-box-arrow-up"></i>
+            <span>Export</span>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end shadow" aria-labelledby="btnExportMenu">
+            <li><h6 class="dropdown-header small text-uppercase fw-bold">Save As</h6></li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnSavePdf" disabled>
+                <i class="bi bi-file-earmark-pdf text-danger"></i>
+                <span>Save PDF</span>
+                <small class="text-muted ms-auto">All pages</small>
+              </button>
+            </li>
+            <li>
+              <button class="dropdown-item d-flex align-items-center gap-2" id="btnSaveJpg" disabled>
+                <i class="bi bi-file-earmark-image text-success"></i>
+                <span>Save JPG</span>
+                <small class="text-muted ms-auto">Current page</small>
+              </button>
+            </li>
+          </ul>
+        </div>
+
         <button class="btn btn-outline-dark btn-sm" id="btnClearAll" disabled>Clear All</button>
       </div>
 
@@ -232,11 +318,17 @@
         <div class="modal-body p-3 bg-secondary-subtle d-flex flex-column align-items-center justify-content-center position-relative" style="min-height: 380px; max-height: 75vh; overflow: auto;">
           <div id="cropContainer" style="position: relative; display: inline-block; user-select: none;">
             <canvas id="cropCanvas" style="display: block; max-width: 100%; max-height: 60vh; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"></canvas>
-            <div id="cropBox" style="position: absolute; border: 2px dashed #0d6efd; background: rgba(13, 110, 253, 0.15); cursor: move; box-sizing: border-box;">
-              <div class="crop-handle handle-nw" style="position: absolute; top: -6px; left: -6px; width: 12px; height: 12px; background: #0d6efd; border: 1.5px solid #fff; border-radius: 2px; cursor: nwse-resize;"></div>
-              <div class="crop-handle handle-ne" style="position: absolute; top: -6px; right: -6px; width: 12px; height: 12px; background: #0d6efd; border: 1.5px solid #fff; border-radius: 2px; cursor: nesw-resize;"></div>
-              <div class="crop-handle handle-se" style="position: absolute; bottom: -6px; right: -6px; width: 12px; height: 12px; background: #0d6efd; border: 1.5px solid #fff; border-radius: 2px; cursor: nwse-resize;"></div>
-              <div class="crop-handle handle-sw" style="position: absolute; bottom: -6px; left: -6px; width: 12px; height: 12px; background: #0d6efd; border: 1.5px solid #fff; border-radius: 2px; cursor: nesw-resize;"></div>
+            <div id="cropBox" style="position: absolute; border: 2px dashed #0d6efd; background: rgba(13, 110, 253, 0.08); cursor: move; box-sizing: border-box;">
+              <!-- Corner handles -->
+              <div class="crop-handle handle-nw" style="position:absolute;top:-7px;left:-7px;width:14px;height:14px;background:#0d6efd;border:2px solid #fff;border-radius:3px;cursor:nwse-resize;z-index:10;"></div>
+              <div class="crop-handle handle-ne" style="position:absolute;top:-7px;right:-7px;width:14px;height:14px;background:#0d6efd;border:2px solid #fff;border-radius:3px;cursor:nesw-resize;z-index:10;"></div>
+              <div class="crop-handle handle-se" style="position:absolute;bottom:-7px;right:-7px;width:14px;height:14px;background:#0d6efd;border:2px solid #fff;border-radius:3px;cursor:nwse-resize;z-index:10;"></div>
+              <div class="crop-handle handle-sw" style="position:absolute;bottom:-7px;left:-7px;width:14px;height:14px;background:#0d6efd;border:2px solid #fff;border-radius:3px;cursor:nesw-resize;z-index:10;"></div>
+              <!-- Edge handles (midpoints) -->
+              <div class="crop-handle handle-n"  style="position:absolute;top:-7px;left:50%;transform:translateX(-50%);width:14px;height:14px;background:#0d6efd;border:2px solid #fff;border-radius:3px;cursor:n-resize;z-index:10;"></div>
+              <div class="crop-handle handle-s"  style="position:absolute;bottom:-7px;left:50%;transform:translateX(-50%);width:14px;height:14px;background:#0d6efd;border:2px solid #fff;border-radius:3px;cursor:s-resize;z-index:10;"></div>
+              <div class="crop-handle handle-e"  style="position:absolute;right:-7px;top:50%;transform:translateY(-50%);width:14px;height:14px;background:#0d6efd;border:2px solid #fff;border-radius:3px;cursor:e-resize;z-index:10;"></div>
+              <div class="crop-handle handle-w"  style="position:absolute;left:-7px;top:50%;transform:translateY(-50%);width:14px;height:14px;background:#0d6efd;border:2px solid #fff;border-radius:3px;cursor:w-resize;z-index:10;"></div>
             </div>
           </div>
         </div>
@@ -254,6 +346,15 @@
 
   <!-- Bootstrap 5 JS Bundle -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  
+  <!-- PDF.js for PDF importing -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  </script>
+
   <script src="app.js"></script>
 </body>
 </html>

@@ -1,0 +1,9 @@
+{
+  "name": "scanningapp",
+  "version": "1.0.0",
+  "description": "NAPS2 Web Hardware Scanner Application",
+  "scripts": {
+    "dev": "npm --prefix backend run dev",
+    "start": "npm --prefix backend start"
+  }
+}
