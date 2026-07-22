@@ -99,6 +99,12 @@
         <button class="btn btn-outline-secondary btn-sm" id="btnAddImage" title="Add Image File">
           <i class="bi bi-file-earmark-plus me-1"></i>Add Image
         </button>
+        <button class="btn btn-outline-primary btn-sm" id="btnDeskew" disabled title="Auto Deskew / Straighten Crooked Scan">
+          <i class="bi bi-magic me-1"></i>Auto Deskew
+        </button>
+        <button class="btn btn-outline-primary btn-sm" id="btnCrop" disabled title="Crop Page Region">
+          <i class="bi bi-crop me-1"></i>Crop
+        </button>
         <button class="btn btn-outline-secondary btn-sm" id="btnRotateLeft" disabled title="Rotate Left 90°">
           <i class="bi bi-arrow-counterclockwise me-1"></i>Rotate Left
         </button>
@@ -208,6 +214,40 @@
             <i class="bi bi-stop-circle me-1"></i>Stop
           </button>
 
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bootstrap 5 Interactive Crop Modal -->
+  <div class="modal fade" id="cropModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content shadow-lg border-0">
+        <div class="modal-header py-2 px-3 bg-dark text-white">
+          <h6 class="modal-title fw-bold d-flex align-items-center gap-2 mb-0">
+            <i class="bi bi-crop text-primary"></i>
+            <span>Crop Document Page</span>
+          </h6>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-3 bg-secondary-subtle d-flex flex-column align-items-center justify-content-center position-relative" style="min-height: 380px; max-height: 75vh; overflow: auto;">
+          <div id="cropContainer" style="position: relative; display: inline-block; user-select: none;">
+            <canvas id="cropCanvas" style="display: block; max-width: 100%; max-height: 60vh; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"></canvas>
+            <div id="cropBox" style="position: absolute; border: 2px dashed #0d6efd; background: rgba(13, 110, 253, 0.15); cursor: move; box-sizing: border-box;">
+              <div class="crop-handle handle-nw" style="position: absolute; top: -6px; left: -6px; width: 12px; height: 12px; background: #0d6efd; border: 1.5px solid #fff; border-radius: 2px; cursor: nwse-resize;"></div>
+              <div class="crop-handle handle-ne" style="position: absolute; top: -6px; right: -6px; width: 12px; height: 12px; background: #0d6efd; border: 1.5px solid #fff; border-radius: 2px; cursor: nesw-resize;"></div>
+              <div class="crop-handle handle-se" style="position: absolute; bottom: -6px; right: -6px; width: 12px; height: 12px; background: #0d6efd; border: 1.5px solid #fff; border-radius: 2px; cursor: nwse-resize;"></div>
+              <div class="crop-handle handle-sw" style="position: absolute; bottom: -6px; left: -6px; width: 12px; height: 12px; background: #0d6efd; border: 1.5px solid #fff; border-radius: 2px; cursor: nesw-resize;"></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer py-2 px-3 bg-light d-flex justify-content-between align-items-center">
+          <span class="text-muted small fw-semibold" id="cropDimensions">Selection: 0 × 0 px</span>
+          <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary btn-sm" id="btnResetCrop">Reset Selection</button>
+            <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+            <button class="btn btn-primary btn-sm fw-semibold" id="btnApplyCrop"><i class="bi bi-check-lg me-1"></i>Apply Crop</button>
+          </div>
         </div>
       </div>
     </div>

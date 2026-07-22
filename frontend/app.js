@@ -46,6 +46,131 @@ class ImageProcessor {
       img.src = dataUrl;
     });
   }
+
+  /**
+   * Automatic Document Deskew / Straighten Algorithm
+   */
+  static deskewDataUrl(dataUrl) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 600;
+        let scale = Math.min(1.0, maxDim / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const pixels = imgData.data;
+
+        const bw = new Uint8Array(w * h);
+        for (let i = 0; i < pixels.length; i += 4) {
+          const lum = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
+          bw[i / 4] = lum < 180 ? 1 : 0;
+        }
+
+        let maxVariance = -1;
+        let bestAngle = 0;
+
+        for (let angle = -10; angle <= 10; angle += 0.5) {
+          const rad = (angle * Math.PI) / 180;
+          const cos = Math.cos(rad);
+          const sin = Math.sin(rad);
+
+          const profile = new Float32Array(h);
+
+          for (let y = 0; y < h; y += 2) {
+            for (let x = 0; x < w; x += 2) {
+              if (bw[y * w + x]) {
+                const rotY = Math.round(-x * sin + y * cos);
+                if (rotY >= 0 && rotY < h) {
+                  profile[rotY]++;
+                }
+              }
+            }
+          }
+
+          let mean = 0;
+          for (let i = 0; i < h; i++) mean += profile[i];
+          mean /= h;
+
+          let variance = 0;
+          for (let i = 0; i < h; i++) {
+            const diff = profile[i] - mean;
+            variance += diff * diff;
+          }
+
+          if (variance > maxVariance) {
+            maxVariance = variance;
+            bestAngle = angle;
+          }
+        }
+
+        if (Math.abs(bestAngle) < 0.2) {
+          resolve({ dataUrl, width: img.width, height: img.height, angle: 0 });
+          return;
+        }
+
+        const rad = (-bestAngle * Math.PI) / 180;
+        const absCos = Math.abs(Math.cos(rad));
+        const absSin = Math.abs(Math.sin(rad));
+
+        const rotW = Math.round(img.width * absCos + img.height * absSin);
+        const rotH = Math.round(img.width * absSin + img.height * absCos);
+
+        const rotCanvas = document.createElement('canvas');
+        rotCanvas.width = rotW;
+        rotCanvas.height = rotH;
+        const rotCtx = rotCanvas.getContext('2d');
+
+        rotCtx.fillStyle = '#ffffff';
+        rotCtx.fillRect(0, 0, rotW, rotH);
+
+        rotCtx.translate(rotW / 2, rotH / 2);
+        rotCtx.rotate(rad);
+        rotCtx.drawImage(img, -img.width / 2, -img.height / 2);
+
+        resolve({
+          dataUrl: rotCanvas.toDataURL('image/jpeg', 0.92),
+          width: rotW,
+          height: rotH,
+          angle: -bestAngle
+        });
+      };
+      img.src = dataUrl;
+    });
+  }
+
+  /**
+   * Crop image canvas to pixel coordinates
+   */
+  static cropDataUrl(dataUrl, cropX, cropY, cropW, cropH) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = cropW;
+        canvas.height = cropH;
+        const ctx = canvas.getContext('2d');
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, cropW, cropH);
+        ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+        resolve({
+          dataUrl: canvas.toDataURL('image/jpeg', 0.92),
+          width: cropW,
+          height: cropH
+        });
+      };
+      img.src = dataUrl;
+    });
+  }
 }
 
 class ScannerApp {
@@ -56,16 +181,17 @@ class ScannerApp {
     this.sortable = null;
     this.scanners = [];
     this.scanModalInstance = null;
+    this.cropModalInstance = null;
 
-    // Detect backend URL (use localhost:3000 when hosted on VSCode Live Server / 127.0.0.1 / file://)
     const isNativeHost = window.location.port === '3000';
     this.apiUrl = isNativeHost ? '' : 'http://localhost:3000';
 
     this.initDOM();
     this.initEvents();
     this.initSortable();
+    this.initCropTool();
     this.loadScanners();
-    this.restoreSession(); // Auto-recover temporary session documents on load
+    this.restoreSession();
     this.updateUI();
   }
 
@@ -82,6 +208,8 @@ class ScannerApp {
 
     // Page editing buttons
     this.btnAddImage = document.getElementById('btnAddImage');
+    this.btnDeskew = document.getElementById('btnDeskew');
+    this.btnCrop = document.getElementById('btnCrop');
     this.btnRotateLeft = document.getElementById('btnRotateLeft');
     this.btnRotateRight = document.getElementById('btnRotateRight');
     this.btnDelete = document.getElementById('btnDelete');
@@ -104,6 +232,14 @@ class ScannerApp {
     this.scanProgressModalEl = document.getElementById('scanProgressModal');
     this.scanProgressSubtitle = document.getElementById('scanProgressSubtitle');
     this.btnModalStopScan = document.getElementById('btnModalStopScan');
+
+    // Crop Modal elements
+    this.cropModalEl = document.getElementById('cropModal');
+    this.cropCanvas = document.getElementById('cropCanvas');
+    this.cropBox = document.getElementById('cropBox');
+    this.cropDimensions = document.getElementById('cropDimensions');
+    this.btnResetCrop = document.getElementById('btnResetCrop');
+    this.btnApplyCrop = document.getElementById('btnApplyCrop');
 
     // Alert Banner
     this.alertBanner = document.getElementById('alertBanner');
@@ -128,9 +264,200 @@ class ScannerApp {
         this.selectedIndex = evt.newIndex;
         this.renderThumbnails();
         this.updatePreview();
-        this.syncSession(); // Sync reordered pages to temp folder
+        this.syncSession();
       }
     });
+  }
+
+  initCropTool() {
+    if (!this.cropBox || !this.cropCanvas) return;
+
+    this.cropState = {
+      isDragging: false,
+      activeHandle: null,
+      startX: 0,
+      startY: 0,
+      boxX: 0,
+      boxY: 0,
+      boxW: 0,
+      boxH: 0,
+      imgW: 0,
+      imgH: 0,
+      canvasW: 0,
+      canvasH: 0
+    };
+
+    const handles = this.cropBox.querySelectorAll('.crop-handle');
+    handles.forEach((handle) => {
+      handle.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        this.cropState.isDragging = true;
+        this.cropState.activeHandle = handle.className;
+        this.cropState.startX = e.clientX;
+        this.cropState.startY = e.clientY;
+      });
+    });
+
+    this.cropBox.addEventListener('mousedown', (e) => {
+      if (e.target.classList.contains('crop-handle')) return;
+      this.cropState.isDragging = true;
+      this.cropState.activeHandle = 'move';
+      this.cropState.startX = e.clientX;
+      this.cropState.startY = e.clientY;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!this.cropState.isDragging) return;
+
+      const dx = e.clientX - this.cropState.startX;
+      const dy = e.clientY - this.cropState.startY;
+
+      const maxW = this.cropState.canvasW;
+      const maxH = this.cropState.canvasH;
+
+      if (this.cropState.activeHandle === 'move') {
+        this.cropState.boxX = Math.max(0, Math.min(maxW - this.cropState.boxW, this.cropState.boxX + dx));
+        this.cropState.boxY = Math.max(0, Math.min(maxH - this.cropState.boxH, this.cropState.boxY + dy));
+      } else if (this.cropState.activeHandle.includes('handle-se')) {
+        this.cropState.boxW = Math.max(20, Math.min(maxW - this.cropState.boxX, this.cropState.boxW + dx));
+        this.cropState.boxH = Math.max(20, Math.min(maxH - this.cropState.boxY, this.cropState.boxH + dy));
+      } else if (this.cropState.activeHandle.includes('handle-sw')) {
+        const newW = Math.max(20, this.cropState.boxW - dx);
+        this.cropState.boxX = Math.max(0, this.cropState.boxX + (this.cropState.boxW - newW));
+        this.cropState.boxW = newW;
+        this.cropState.boxH = Math.max(20, Math.min(maxH - this.cropState.boxY, this.cropState.boxH + dy));
+      } else if (this.cropState.activeHandle.includes('handle-ne')) {
+        this.cropState.boxW = Math.max(20, Math.min(maxW - this.cropState.boxX, this.cropState.boxW + dx));
+        const newH = Math.max(20, this.cropState.boxH - dy);
+        this.cropState.boxY = Math.max(0, this.cropState.boxY + (this.cropState.boxH - newH));
+        this.cropState.boxH = newH;
+      } else if (this.cropState.activeHandle.includes('handle-nw')) {
+        const newW = Math.max(20, this.cropState.boxW - dx);
+        this.cropState.boxX = Math.max(0, this.cropState.boxX + (this.cropState.boxW - newW));
+        this.cropState.boxW = newW;
+        const newH = Math.max(20, this.cropState.boxH - dy);
+        this.cropState.boxY = Math.max(0, this.cropState.boxY + (this.cropState.boxH - newH));
+        this.cropState.boxH = newH;
+      }
+
+      this.cropState.startX = e.clientX;
+      this.cropState.startY = e.clientY;
+      this.updateCropBoxDOM();
+    });
+
+    window.addEventListener('mouseup', () => {
+      this.cropState.isDragging = false;
+      this.cropState.activeHandle = null;
+    });
+
+    if (this.btnResetCrop) {
+      this.btnResetCrop.addEventListener('click', () => this.resetCropBox());
+    }
+
+    if (this.btnApplyCrop) {
+      this.btnApplyCrop.addEventListener('click', () => this.applyCrop());
+    }
+  }
+
+  updateCropBoxDOM() {
+    this.cropBox.style.left = `${this.cropState.boxX}px`;
+    this.cropBox.style.top = `${this.cropState.boxY}px`;
+    this.cropBox.style.width = `${this.cropState.boxW}px`;
+    this.cropBox.style.height = `${this.cropState.boxH}px`;
+
+    const scaleX = this.cropState.imgW / this.cropState.canvasW;
+    const scaleY = this.cropState.imgH / this.cropState.canvasH;
+
+    const realW = Math.round(this.cropState.boxW * scaleX);
+    const realH = Math.round(this.cropState.boxH * scaleY);
+
+    if (this.cropDimensions) {
+      this.cropDimensions.textContent = `Selection: ${realW} × ${realH} px`;
+    }
+  }
+
+  resetCropBox() {
+    const margin = 10;
+    this.cropState.boxX = margin;
+    this.cropState.boxY = margin;
+    this.cropState.boxW = Math.max(40, this.cropState.canvasW - margin * 2);
+    this.cropState.boxH = Math.max(40, this.cropState.canvasH - margin * 2);
+    this.updateCropBoxDOM();
+  }
+
+  async openCropModal() {
+    if (this.selectedIndex < 0 || this.selectedIndex >= this.pages.length) return;
+
+    const page = this.pages[this.selectedIndex];
+    const rotatedDataUrl = await ImageProcessor.getRotatedDataUrl(page.dataUrl, page.rotation);
+
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 700;
+      const maxH = 450;
+      let scale = Math.min(1.0, Math.min(maxW / img.width, maxH / img.height));
+
+      const cW = Math.round(img.width * scale);
+      const cH = Math.round(img.height * scale);
+
+      this.cropCanvas.width = cW;
+      this.cropCanvas.height = cH;
+
+      const ctx = this.cropCanvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, cW, cH);
+
+      this.cropState.imgW = img.width;
+      this.cropState.imgH = img.height;
+      this.cropState.canvasW = cW;
+      this.cropState.canvasH = cH;
+
+      this.resetCropBox();
+
+      if (window.bootstrap && this.cropModalEl) {
+        if (!this.cropModalInstance) {
+          this.cropModalInstance = new bootstrap.Modal(this.cropModalEl);
+        }
+        this.cropModalInstance.show();
+      }
+    };
+    img.src = rotatedDataUrl;
+  }
+
+  async applyCrop() {
+    if (this.selectedIndex < 0 || this.selectedIndex >= this.pages.length) return;
+
+    const page = this.pages[this.selectedIndex];
+    const rotatedDataUrl = await ImageProcessor.getRotatedDataUrl(page.dataUrl, page.rotation);
+
+    const scaleX = this.cropState.imgW / this.cropState.canvasW;
+    const scaleY = this.cropState.imgH / this.cropState.canvasH;
+
+    const cropX = Math.round(this.cropState.boxX * scaleX);
+    const cropY = Math.round(this.cropState.boxY * scaleY);
+    const cropW = Math.round(this.cropState.boxW * scaleX);
+    const cropH = Math.round(this.cropState.boxH * scaleY);
+
+    try {
+      const result = await ImageProcessor.cropDataUrl(rotatedDataUrl, cropX, cropY, cropW, cropH);
+      if (result && result.dataUrl) {
+        page.dataUrl = result.dataUrl;
+        page.width = result.width;
+        page.height = result.height;
+        page.rotation = 0; // Reset rotation after baking into crop
+
+        this.renderThumbnails();
+        this.updatePreview();
+        this.syncSession();
+
+        if (this.cropModalInstance) {
+          this.cropModalInstance.hide();
+        }
+
+        this.showAlert(`Document cropped to ${result.width} × ${result.height} px`, false);
+      }
+    } catch (err) {
+      console.warn('Crop error:', err);
+    }
   }
 
   initEvents() {
@@ -148,6 +475,12 @@ class ScannerApp {
       localStorage.setItem('naps2_selected_scanner', this.scannerSelect.value);
     });
 
+    if (this.btnDeskew) {
+      this.btnDeskew.addEventListener('click', () => this.deskewSelected());
+    }
+    if (this.btnCrop) {
+      this.btnCrop.addEventListener('click', () => this.openCropModal());
+    }
     this.btnRotateLeft.addEventListener('click', () => this.rotateSelected(-90));
     this.btnRotateRight.addEventListener('click', () => this.rotateSelected(90));
     this.btnDelete.addEventListener('click', () => this.deleteSelected());
@@ -215,7 +548,6 @@ class ScannerApp {
         });
       }
 
-      // Restore previously saved scanner selection
       const saved = localStorage.getItem('naps2_selected_scanner');
       if (saved && Array.from(this.scannerSelect.options).some(o => o.value === saved)) {
         this.scannerSelect.value = saved;
@@ -366,7 +698,7 @@ class ScannerApp {
       this.selectedIndex = this.pages.length - 1;
       this.renderThumbnails();
       this.updateUI();
-      this.syncSession(); // Background cache page to temp folder
+      this.syncSession();
     };
     img.src = dataUrl;
   }
@@ -398,12 +730,45 @@ class ScannerApp {
     }
   }
 
+  async deskewSelected() {
+    if (this.selectedIndex < 0 || this.selectedIndex >= this.pages.length) return;
+
+    const page = this.pages[this.selectedIndex];
+    if (this.btnDeskew) {
+      this.btnDeskew.disabled = true;
+      this.btnDeskew.innerHTML = `<i class="bi bi-arrow-repeat spin-icon me-1"></i>Aligning...`;
+    }
+
+    try {
+      const result = await ImageProcessor.deskewDataUrl(page.dataUrl);
+      if (result && result.dataUrl) {
+        page.dataUrl = result.dataUrl;
+        page.width = result.width;
+        page.height = result.height;
+        this.renderThumbnails();
+        this.updatePreview();
+        this.syncSession();
+        if (result.angle !== 0) {
+          this.showAlert(`Document straightened by ${result.angle.toFixed(1)}°`, false);
+        } else {
+          this.showAlert('Document is already perfectly aligned.', false);
+        }
+      }
+    } catch (err) {
+      console.warn('Deskew error:', err);
+    } finally {
+      if (this.btnDeskew) {
+        this.btnDeskew.disabled = false;
+        this.btnDeskew.innerHTML = `<i class="bi bi-magic me-1"></i>Auto Deskew`;
+      }
+    }
+  }
+
   rotateSelected(delta) {
     if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
       const page = this.pages[this.selectedIndex];
       page.rotate(delta);
 
-      // Fast, zero-flicker in-place CSS rotation
       const activeCard = this.thumbnailList.children[this.selectedIndex];
       if (activeCard) {
         const thumbImg = activeCard.querySelector('.thumbnail-img');
@@ -413,7 +778,7 @@ class ScannerApp {
       }
 
       this.updatePreview();
-      this.syncSession(); // Background cache rotated page to temp folder
+      this.syncSession();
     }
   }
 
@@ -425,7 +790,7 @@ class ScannerApp {
       }
       this.renderThumbnails();
       this.updateUI();
-      this.syncSession(); // Background sync deleted page from temp folder
+      this.syncSession();
     }
   }
 
@@ -436,7 +801,7 @@ class ScannerApp {
       this.selectedIndex = -1;
       this.renderThumbnails();
       this.updateUI();
-      this.clearSession(); // Clean temporary disk session folder
+      this.clearSession();
     }
   }
 
@@ -500,6 +865,8 @@ class ScannerApp {
       this.previewControls.classList.add('hidden-input');
     }
 
+    if (this.btnDeskew) this.btnDeskew.disabled = !hasSelection;
+    if (this.btnCrop) this.btnCrop.disabled = !hasSelection;
     this.btnRotateLeft.disabled = !hasSelection;
     this.btnRotateRight.disabled = !hasSelection;
     this.btnDelete.disabled = !hasSelection;
