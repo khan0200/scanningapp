@@ -215,6 +215,9 @@ class ImageProcessor {
           width: cropW,
           height: cropH
         });
+      };
+      img.src = dataUrl;
+    });
   }
 
   /**
