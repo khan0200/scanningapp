@@ -96,21 +96,24 @@ namespace NativeWiaScanner
 
                 dynamic item = device.Items[1];
 
-                // Configure DPI (Horizontal=6147, Vertical=6148)
-                try { item.Properties["6147"].Value = dpi; } catch {}
-                try { item.Properties["6148"].Value = dpi; } catch {}
-
-                // Color Intent: 1=Color, 2=Grayscale, 4=BW
-                int intent = 1;
-                if (colorMode.Equals("Grayscale", StringComparison.OrdinalIgnoreCase)) intent = 2;
-                if (colorMode.Equals("Black & White", StringComparison.OrdinalIgnoreCase) || colorMode.Equals("BW", StringComparison.OrdinalIgnoreCase)) intent = 4;
-                try { item.Properties["6146"].Value = intent; } catch {}
-
-                // Paper Source: 1=Flatbed, 2=ADF
+                // 1. Paper Source: 1=Flatbed, 2=ADF
                 int paperSourceVal = source.Equals("ADF", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
                 try { device.Properties["3088"].Value = paperSourceVal; } catch {}
 
-                // Full Page Dimensions (A4 = 8.27 x 11.69 in, Letter = 8.5 x 11.0 in)
+                // 2. Color Intent (6146) & DataType (4103) MUST BE SET BEFORE RESOLUTION
+                int intent = 1;   // 1 = Color, 2 = Grayscale, 4 = BW
+                int dataType = 2; // 2 = Color, 1 = Grayscale, 0 = BW
+                if (colorMode.Equals("Grayscale", StringComparison.OrdinalIgnoreCase)) { intent = 2; dataType = 1; }
+                if (colorMode.Equals("Black & White", StringComparison.OrdinalIgnoreCase) || colorMode.Equals("BW", StringComparison.OrdinalIgnoreCase)) { intent = 4; dataType = 0; }
+
+                try { item.Properties["6146"].Value = intent; } catch {}
+                try { item.Properties["4103"].Value = dataType; } catch {}
+
+                // 3. Resolution (Horizontal=6147, Vertical=6148) MUST BE SET AFTER INTENT TO OVERRIDE INTENT DEFAULT
+                try { item.Properties["6147"].Value = dpi; } catch {}
+                try { item.Properties["6148"].Value = dpi; } catch {}
+
+                // 4. Calculate Full Page Extents based on DPI
                 double widthInches = 8.27;  // A4 Default Width
                 double heightInches = 11.69; // A4 Default Height
 
@@ -122,11 +125,11 @@ namespace NativeWiaScanner
                 int targetWidthPx = (int)(widthInches * dpi);
                 int targetHeightPx = (int)(heightInches * dpi);
 
-                // Set Start Positions to 0 (top-left origin)
+                // Reset Start Positions to 0
                 try { item.Properties["6149"].Value = 0; } catch {} // Horizontal Start
                 try { item.Properties["6150"].Value = 0; } catch {} // Vertical Start
 
-                // Set Extents (Width & Height)
+                // Apply Extents (Width & Height)
                 try {
                     var widthProp = item.Properties["6151"];
                     int maxW = Convert.ToInt32(widthProp.Attributes.MaxValue);
@@ -179,7 +182,7 @@ namespace NativeWiaScanner
                     pagesJsonArr.Add("\"" + page + "\"");
                 }
 
-                Console.WriteLine("{\"success\":true,\"method\":\"WIA_CS\",\"pages\":[" + string.Join(",", pagesJsonArr.ToArray()) + "]}");
+                Console.WriteLine("{\"success\":true,\"method\":\"WIA_CS\",\"dpi\":" + dpi + ",\"pages\":[" + string.Join(",", pagesJsonArr.ToArray()) + "]}");
 
             } catch (Exception ex) {
                 string msg = EscapeJson(ex.Message);
