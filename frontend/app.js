@@ -194,6 +194,123 @@ class ImageProcessor {
     });
   }
 
+  static applyFiltersDataUrl(dataUrl, rotationAngle, brightness, contrast) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // 1. Rotate the image first by arbitrary rotationAngle (in degrees)
+        const rad = (rotationAngle * Math.PI) / 180;
+        const absCos = Math.abs(Math.cos(rad));
+        const absSin = Math.abs(Math.sin(rad));
+
+        const rotW = Math.ceil(img.width * absCos + img.height * absSin);
+        const rotH = Math.ceil(img.width * absSin + img.height * absCos);
+
+        canvas.width = rotW;
+        canvas.height = rotH;
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, rotW, rotH);
+        ctx.translate(rotW / 2, rotH / 2);
+        ctx.rotate(rad);
+        ctx.drawImage(img, -img.width / 2, -img.height / 2);
+
+        // Reset transform
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+        // 2. Apply Brightness and Contrast
+        if (brightness !== 0 || contrast !== 0) {
+          const imgData = ctx.getImageData(0, 0, rotW, rotH);
+          const pixels = imgData.data;
+
+          // Contrast factor
+          const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+
+          for (let i = 0; i < pixels.length; i += 4) {
+            // Brightness + Contrast for Red
+            let r = pixels[i] + brightness;
+            r = factor * (r - 128) + 128;
+            pixels[i] = Math.max(0, Math.min(255, r));
+
+            // Green
+            let g = pixels[i+1] + brightness;
+            g = factor * (g - 128) + 128;
+            pixels[i+1] = Math.max(0, Math.min(255, g));
+
+            // Blue
+            let b = pixels[i+2] + brightness;
+            b = factor * (b - 128) + 128;
+            pixels[i+2] = Math.max(0, Math.min(255, b));
+          }
+
+          ctx.putImageData(imgData, 0, 0);
+        }
+
+        resolve({
+          dataUrl: canvas.toDataURL('image/jpeg', 0.94),
+          width: rotW,
+          height: rotH
+        });
+      };
+      img.src = dataUrl;
+    });
+  }
+
+  static getProcessedBarcodeDataUrl(img, conf) {
+    const canvas = document.createElement('canvas');
+    const w = Math.round(img.width * conf.scale);
+    const h = Math.round(img.height * conf.scale);
+
+    canvas.width = w + conf.border * 2;
+    canvas.height = h + conf.border * 2;
+
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, conf.border, conf.border, w, h);
+
+    if (conf.threshold || conf.contrast !== 0) {
+      const imgData = ctx.getImageData(conf.border, conf.border, w, h);
+      const pixels = imgData.data;
+
+      if (conf.threshold) {
+        let sum = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          const v = 0.299 * pixels[i] + 0.587 * pixels[i+1] + 0.114 * pixels[i+2];
+          sum += v;
+        }
+        const avg = sum / (pixels.length / 4);
+        const th = avg * (conf.thMultiplier !== undefined ? conf.thMultiplier : 0.9);
+
+        for (let i = 0; i < pixels.length; i += 4) {
+          const v = 0.299 * pixels[i] + 0.587 * pixels[i+1] + 0.114 * pixels[i+2];
+          let color = v < th ? 0 : 255;
+          if (conf.inverse) {
+            color = color === 0 ? 255 : 0;
+          }
+          pixels[i] = color;
+          pixels[i+1] = color;
+          pixels[i+2] = color;
+        }
+      } else if (conf.contrast !== 0) {
+        const factor = (259 * (conf.contrast + 255)) / (255 * (259 - conf.contrast));
+        for (let i = 0; i < pixels.length; i += 4) {
+          const v = 0.299 * pixels[i] + 0.587 * pixels[i+1] + 0.114 * pixels[i+2];
+          let nv = factor * (v - 128) + 128;
+          nv = Math.max(0, Math.min(255, nv));
+          pixels[i] = nv;
+          pixels[i+1] = nv;
+          pixels[i+2] = nv;
+        }
+      }
+      ctx.putImageData(imgData, conf.border, conf.border);
+    }
+    return canvas.toDataURL('image/jpeg', 0.9);
+  }
+
 
   /**
    * Crop image canvas to pixel coordinates
@@ -961,6 +1078,30 @@ class ScannerApp {
     this.btnZoomOut = document.getElementById('btnZoomOut');
     this.btnZoomReset = document.getElementById('btnZoomReset');
     this.zoomLevelText = document.getElementById('zoomLevelText');
+
+    // New Features & Modals elements
+    this.btnAdjust = document.getElementById('btnAdjust');
+    this.btnBarcode = document.getElementById('btnBarcode');
+
+    this.adjustModalEl = document.getElementById('adjustModal');
+    this.adjustCanvas = document.getElementById('adjustCanvas');
+    this.adjustBrightness = document.getElementById('adjustBrightness');
+    this.adjustContrast = document.getElementById('adjustContrast');
+    this.adjustRotate = document.getElementById('adjustRotate');
+    this.btnResetAdjust = document.getElementById('btnResetAdjust');
+    this.btnApplyAdjust = document.getElementById('btnApplyAdjust');
+
+    this.barcodeModalEl = document.getElementById('barcodeModal');
+    this.barcodeContainer = document.getElementById('barcodeContainer');
+
+    // PDF Preview Modal elements
+    this.pdfPreviewModalEl = document.getElementById('pdfPreviewModal');
+    this.pdfPreviewGrid = document.getElementById('pdfPreviewGrid');
+    this.pdfTotalPagesText = document.getElementById('pdfTotalPagesText');
+    this.pdfSelectedCountText = document.getElementById('pdfSelectedCountText');
+    this.btnPdfSelectAll = document.getElementById('btnPdfSelectAll');
+    this.btnPdfDeselectAll = document.getElementById('btnPdfDeselectAll');
+    this.btnConfirmPdfImport = document.getElementById('btnConfirmPdfImport');
   }
 
   initSortable() {
@@ -1352,6 +1493,329 @@ class ScannerApp {
     }
   }
 
+  openAdjustModal() {
+    if (this.selectedIndex < 0 || this.selectedIndex >= this.pages.length) return;
+
+    const page = this.pages[this.selectedIndex];
+    
+    // Reset sliders
+    this.adjustBrightness.value = 0;
+    this.adjustContrast.value = 0;
+    this.adjustRotate.value = 0;
+    
+    document.getElementById('brightnessVal').textContent = '0';
+    document.getElementById('contrastVal').textContent = '0';
+    document.getElementById('rotateVal').textContent = '0°';
+
+    // Store the original image
+    this.adjustOriginalImage = new Image();
+    this.adjustOriginalImage.onload = () => {
+      // Downsample for fast real-time preview adjustments
+      const maxW = 700;
+      const maxH = 450;
+      const img = this.adjustOriginalImage;
+      let scale = Math.min(1.0, Math.min(maxW / img.width, maxH / img.height));
+
+      this.adjustPreviewW = Math.round(img.width * scale);
+      this.adjustPreviewH = Math.round(img.height * scale);
+
+      // Create a downsampled cache image for 60fps rendering during slider adjustments
+      const cacheCanvas = document.createElement('canvas');
+      cacheCanvas.width = this.adjustPreviewW;
+      cacheCanvas.height = this.adjustPreviewH;
+      const cacheCtx = cacheCanvas.getContext('2d');
+      cacheCtx.drawImage(img, 0, 0, this.adjustPreviewW, this.adjustPreviewH);
+
+      this.adjustPreviewCache = new Image();
+      this.adjustPreviewCache.onload = () => {
+        this.updateAdjustPreview();
+        
+        if (window.bootstrap && this.adjustModalEl) {
+          if (!this.adjustModalInstance) {
+            this.adjustModalInstance = new bootstrap.Modal(this.adjustModalEl);
+          }
+          this.adjustModalInstance.show();
+        }
+      };
+      this.adjustPreviewCache.src = cacheCanvas.toDataURL('image/jpeg', 0.9);
+    };
+    
+    // Use the image rotated by its standard 90deg steps as base if any
+    ImageProcessor.getRotatedDataUrl(page.dataUrl, page.rotation).then((rotatedDataUrl) => {
+      this.adjustOriginalImage.src = rotatedDataUrl;
+    });
+  }
+
+  updateAdjustPreview() {
+    if (!this.adjustPreviewCache || !this.adjustCanvas) return;
+
+    const brightness = parseInt(this.adjustBrightness.value, 10);
+    const contrast = parseInt(this.adjustContrast.value, 10);
+    const angle = parseInt(this.adjustRotate.value, 10);
+
+    document.getElementById('brightnessVal').textContent = brightness > 0 ? `+${brightness}` : brightness;
+    document.getElementById('contrastVal').textContent = contrast > 0 ? `+${contrast}` : contrast;
+    document.getElementById('rotateVal').textContent = `${angle}°`;
+
+    const img = this.adjustPreviewCache;
+    const canvas = this.adjustCanvas;
+    const ctx = canvas.getContext('2d');
+
+    // 1. Calculate rotated size
+    const rad = (angle * Math.PI) / 180;
+    const absCos = Math.abs(Math.cos(rad));
+    const absSin = Math.abs(Math.sin(rad));
+
+    const rotW = Math.ceil(img.width * absCos + img.height * absSin);
+    const rotH = Math.ceil(img.width * absSin + img.height * absCos);
+
+    canvas.width = rotW;
+    canvas.height = rotH;
+
+    // 2. Draw rotated image
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, rotW, rotH);
+    ctx.translate(rotW / 2, rotH / 2);
+    ctx.rotate(rad);
+    ctx.drawImage(img, -img.width / 2, -img.height / 2);
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // reset
+
+    // 3. Apply Brightness and Contrast
+    if (brightness !== 0 || contrast !== 0) {
+      const imgData = ctx.getImageData(0, 0, rotW, rotH);
+      const pixels = imgData.data;
+
+      const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+
+      for (let i = 0; i < pixels.length; i += 4) {
+        let r = pixels[i] + brightness;
+        r = factor * (r - 128) + 128;
+        pixels[i] = Math.max(0, Math.min(255, r));
+
+        let g = pixels[i+1] + brightness;
+        g = factor * (g - 128) + 128;
+        pixels[i+1] = Math.max(0, Math.min(255, g));
+
+        let b = pixels[i+2] + brightness;
+        b = factor * (b - 128) + 128;
+        pixels[i+2] = Math.max(0, Math.min(255, b));
+      }
+      ctx.putImageData(imgData, 0, 0);
+    }
+  }
+
+  async applyAdjustments() {
+    if (this.selectedIndex < 0 || this.selectedIndex >= this.pages.length) return;
+
+    const page = this.pages[this.selectedIndex];
+    const brightness = parseInt(this.adjustBrightness.value, 10);
+    const contrast = parseInt(this.adjustContrast.value, 10);
+    const angle = parseInt(this.adjustRotate.value, 10);
+
+    if (brightness === 0 && contrast === 0 && angle === 0) {
+      if (this.adjustModalInstance) this.adjustModalInstance.hide();
+      return;
+    }
+
+    const btn = document.getElementById('btnApplyAdjust');
+    const oldText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Applying...';
+
+    // Run in setTimeout to prevent blocking the UI thread spinner
+    setTimeout(async () => {
+      try {
+        const result = await ImageProcessor.applyFiltersDataUrl(
+          this.adjustOriginalImage.src,
+          angle,
+          brightness,
+          contrast
+        );
+
+        if (result && result.dataUrl) {
+          this.saveHistoryState();
+          page.dataUrl = result.dataUrl;
+          page.width = result.width;
+          page.height = result.height;
+          page.rotation = 0; // reset rotation since it's baked in
+
+          this.renderThumbnails();
+          this.updateUI();
+          this.syncSession();
+
+          if (this.adjustModalInstance) {
+            this.adjustModalInstance.hide();
+          }
+          this.showAlert('Adjustments applied successfully.', false);
+        }
+      } catch (err) {
+        console.warn('Adjustments apply error:', err);
+        this.showAlert('Failed to apply image adjustments.', true);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = oldText;
+      }
+    }, 50);
+  }
+
+  async detectBarcodes() {
+    if (this.selectedIndex < 0 || this.selectedIndex >= this.pages.length) return;
+
+    if (typeof ZXing === 'undefined') {
+      this.showAlert('Barcode detection library is still loading. Please try again in a moment.', true);
+      return;
+    }
+
+    const btn = document.getElementById('btnBarcode');
+    const oldHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Detecting...';
+
+    const page = this.pages[this.selectedIndex];
+    
+    // Draw page on a full resolution canvas
+    const img = new Image();
+    img.onload = async () => {
+      try {
+        // Multi-pass intelligent pre-processing configuration list
+        const configs = [
+          { name: 'Original', border: 0, threshold: false, contrast: 0, scale: 1.0 },
+          { name: 'Quiet Zone Helper', border: 40, threshold: false, contrast: 0, scale: 1.0 },
+          { name: 'Contrast + Border', border: 40, threshold: false, contrast: 60, scale: 1.0 },
+          { name: 'Binarized + Border', border: 40, threshold: true, thMultiplier: 0.9, scale: 1.0 },
+          { name: 'Inverse Binarized', border: 40, threshold: true, inverse: true, thMultiplier: 0.9, scale: 1.0 },
+          { name: 'Downscaled + Border', border: 30, threshold: false, contrast: 0, scale: 0.5 },
+          { name: 'Upscaled + Binarized', border: 40, threshold: true, thMultiplier: 0.9, scale: 1.5 }
+        ];
+
+        let result = null;
+        let lastErr = null;
+
+        for (const conf of configs) {
+          // Skip downscaling if image is already small
+          if (conf.scale < 1.0 && img.width < 800 && img.height < 800) continue;
+          // Skip upscaling if image is already large
+          if (conf.scale > 1.0 && (img.width > 1200 || img.height > 1200)) continue;
+
+          try {
+            const dataUrl = ImageProcessor.getProcessedBarcodeDataUrl(img, conf);
+            const candidateImg = new Image();
+            
+            result = await new Promise((resolve, reject) => {
+              candidateImg.onload = async () => {
+                try {
+                  const hints = new Map();
+                  hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
+                  const reader = new window.ZXing.BrowserMultiFormatReader(hints);
+                  const res = await reader.decodeFromImageElement(candidateImg);
+                  resolve(res);
+                } catch (e) {
+                  reject(e);
+                }
+              };
+              candidateImg.onerror = () => reject(new Error('Failed to load preprocessed candidate image'));
+              candidateImg.src = dataUrl;
+            });
+
+            console.log(`Barcode scanned successfully using pass: "${conf.name}"`, conf);
+            break; // Succeeded! Exit the loop.
+          } catch (e) {
+            lastErr = e;
+          }
+        }
+
+        if (!result) {
+          throw lastErr || new Error('No barcode or QR code detected.');
+        }
+
+        // Decode successful!
+        const text = result.getText();
+        const format = result.getBarcodeFormat();
+        
+        let formatName = 'Barcode';
+        if (format === 11) formatName = 'QR Code';
+        else if (format === 0) formatName = 'Aztec';
+        else if (format === 2) formatName = 'Codabar';
+        else if (format === 3) formatName = 'Code 39';
+        else if (format === 4) formatName = 'Code 93';
+        else if (format === 5) formatName = 'Code 128';
+        else if (format === 6) formatName = 'Data Matrix';
+        else if (format === 7) formatName = 'EAN-8';
+        else if (format === 8) formatName = 'EAN-13';
+        else if (format === 9) formatName = 'ITF';
+        else if (format === 10) formatName = 'MaxiCode';
+        else if (format === 12) formatName = 'PDF417';
+        else if (format === 13) formatName = 'RSS 14';
+        else if (format === 14) formatName = 'RSS Expanded';
+        else if (format === 15) formatName = 'UPC-A';
+        else if (format === 16) formatName = 'UPC-E';
+        else if (format === 17) formatName = 'UPC/EAN Extension';
+
+        // Display results in the modal
+        const container = document.getElementById('barcodeContainer');
+        container.innerHTML = `
+          <div class="alert alert-success d-flex align-items-center gap-2 py-2 px-3 mb-3">
+            <i class="bi bi-check-circle-fill fs-5 text-success"></i>
+            <div><strong>Success!</strong> Detected 1 barcode/QR code on the document.</div>
+          </div>
+          <div class="card shadow-sm border border-success-subtle mb-0">
+            <div class="card-header py-2 bg-success bg-opacity-10 fw-bold small text-success-emphasis text-uppercase d-flex justify-content-between align-items-center">
+              <span>Code Type: ${formatName}</span>
+              <span class="badge bg-success bg-opacity-70">${format}</span>
+            </div>
+            <div class="card-body p-3 bg-white">
+              <pre class="bg-light p-2 border rounded text-wrap word-break" style="font-family: monospace; max-height: 200px; overflow-y: auto;">${this.escapeHtml(text)}</pre>
+              <button class="btn btn-outline-success btn-sm w-100 fw-semibold mt-2 d-flex align-items-center justify-content-center gap-1" id="btnCopyBarcode">
+                <i class="bi bi-clipboard"></i> Copy Contents
+              </button>
+            </div>
+          </div>
+        `;
+
+        // Bind copy button
+        document.getElementById('btnCopyBarcode').addEventListener('click', () => {
+          navigator.clipboard.writeText(text).then(() => {
+            const btnCopy = document.getElementById('btnCopyBarcode');
+            btnCopy.innerHTML = '<i class="bi bi-check2"></i> Copied!';
+            btnCopy.className = 'btn btn-success btn-sm w-100 fw-semibold mt-2';
+            setTimeout(() => {
+              btnCopy.innerHTML = '<i class="bi bi-clipboard"></i> Copy Contents';
+              btnCopy.className = 'btn btn-outline-success btn-sm w-100 fw-semibold mt-2';
+            }, 1500);
+          });
+        });
+
+        // Show the results modal
+        if (window.bootstrap) {
+          const modalEl = document.getElementById('barcodeModal');
+          const inst = new bootstrap.Modal(modalEl);
+          inst.show();
+        }
+
+      } catch (err) {
+        if (err.name === 'NotFoundException' || err.message?.includes('No MultiFormatReader')) {
+          this.showAlert('No barcodes or QR codes detected on the current page. Ensure it is clear and correctly oriented.', true);
+        } else {
+          console.warn('Barcode error:', err);
+          this.showAlert('Barcode detection failed: ' + err.message, true);
+        }
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = oldHtml;
+      }
+    };
+    img.src = await ImageProcessor.getRotatedDataUrl(page.dataUrl, page.rotation);
+  }
+
+  escapeHtml(unsafe) {
+    return unsafe
+         .replace(/&/g, "&amp;")
+         .replace(/</g, "&lt;")
+         .replace(/>/g, "&gt;")
+         .replace(/"/g, "&quot;")
+         .replace(/'/g, "&#039;");
+  }
+
   resetCropBox() {
     const margin = 10;
     this.cropState.boxX = margin;
@@ -1658,6 +2122,50 @@ class ScannerApp {
 
     // Alert dismissal
     this.btnCloseAlert.addEventListener('click', () => this.hideAlert());
+
+    // Adjustments triggers
+    if (this.btnAdjust) {
+      this.btnAdjust.addEventListener('click', () => this.openAdjustModal());
+    }
+    if (this.btnResetAdjust) {
+      this.btnResetAdjust.addEventListener('click', () => {
+        this.adjustBrightness.value = 0;
+        this.adjustContrast.value = 0;
+        this.adjustRotate.value = 0;
+        this.updateAdjustPreview();
+      });
+    }
+    if (this.btnApplyAdjust) {
+      this.btnApplyAdjust.addEventListener('click', () => this.applyAdjustments());
+    }
+
+    // Sliders real-time update
+    const updatePreviewOnInput = () => this.updateAdjustPreview();
+    if (this.adjustBrightness) {
+      this.adjustBrightness.addEventListener('input', updatePreviewOnInput);
+    }
+    if (this.adjustContrast) {
+      this.adjustContrast.addEventListener('input', updatePreviewOnInput);
+    }
+    if (this.adjustRotate) {
+      this.adjustRotate.addEventListener('input', updatePreviewOnInput);
+    }
+
+    // Barcode trigger
+    if (this.btnBarcode) {
+      this.btnBarcode.addEventListener('click', () => this.detectBarcodes());
+    }
+
+    // PDF Preview selection events
+    if (this.btnPdfSelectAll) {
+      this.btnPdfSelectAll.addEventListener('click', () => this.toggleAllPdfPages(true));
+    }
+    if (this.btnPdfDeselectAll) {
+      this.btnPdfDeselectAll.addEventListener('click', () => this.toggleAllPdfPages(false));
+    }
+    if (this.btnConfirmPdfImport) {
+      this.btnConfirmPdfImport.addEventListener('click', () => this.confirmPdfImport());
+    }
 
     // Drag and Drop files onto workspace
     window.addEventListener('dragover', (e) => e.preventDefault());
@@ -2022,7 +2530,29 @@ class ScannerApp {
   }
 
   deleteSelected() {
-    if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
+    if (this.selectedIndices.size > 0) {
+      this.saveHistoryState();
+      // Sort indices descending to splice safely from the back
+      const indices = Array.from(this.selectedIndices).sort((a, b) => b - a);
+      indices.forEach((idx) => {
+        if (idx >= 0 && idx < this.pages.length) {
+          this.pages.splice(idx, 1);
+        }
+      });
+      this.selectedIndices.clear();
+      // Adjust selected index
+      if (this.pages.length === 0) {
+        this.selectedIndex = -1;
+      } else if (this.selectedIndex >= this.pages.length) {
+        this.selectedIndex = this.pages.length - 1;
+      } else {
+        this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, this.pages.length - 1));
+      }
+      this.renderThumbnails();
+      this.updateUI();
+      this.syncSession();
+      this.showAlert(`${indices.length} pages deleted.`, false);
+    } else if (this.selectedIndex >= 0 && this.selectedIndex < this.pages.length) {
       this.saveHistoryState();
       this.pages.splice(this.selectedIndex, 1);
       this.selectedIndices.clear();
@@ -2032,6 +2562,7 @@ class ScannerApp {
       this.renderThumbnails();
       this.updateUI();
       this.syncSession();
+      this.showAlert(`Page deleted.`, false);
     }
   }
 
@@ -2188,6 +2719,8 @@ class ScannerApp {
 
     if (this.btnDeskew) this.btnDeskew.disabled = !hasSelection;
     if (this.btnCrop) this.btnCrop.disabled = !hasSelection;
+    if (this.btnAdjust) this.btnAdjust.disabled = !hasSelection;
+    if (this.btnBarcode) this.btnBarcode.disabled = !hasSelection;
     if (this.btnDuplicate) this.btnDuplicate.disabled = !hasSelection;
     this.btnRotateLeft.disabled = !hasSelection;
     this.btnRotateRight.disabled = !hasSelection;
@@ -2406,35 +2939,189 @@ class ScannerApp {
     try {
       const pdfjsLib = window.pdfjsLib;
       const typedArray = new Uint8Array(buffer);
-      const pdfDoc = await pdfjsLib.getDocument({ data: typedArray }).promise;
-      const totalPages = pdfDoc.numPages;
+      this.pdfDocToImport = await pdfjsLib.getDocument({ data: typedArray }).promise;
+      const totalPages = this.pdfDocToImport.numPages;
 
-      this.showAlert(`Importing PDF — ${totalPages} page${totalPages === 1 ? '' : 's'}...`, false);
-      this.saveHistoryState();
-
-      const SCALE = 2.0; // 2× gives ~150–200 DPI equivalent
-      for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-        const pdfPage = await pdfDoc.getPage(pageNum);
-        const viewport = pdfPage.getViewport({ scale: SCALE });
-
-        const canvas = document.createElement('canvas');
-        canvas.width  = Math.round(viewport.width);
-        canvas.height = Math.round(viewport.height);
-
-        await pdfPage.render({
-          canvasContext: canvas.getContext('2d'),
-          viewport
-        }).promise;
-
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-        this.addPage(dataUrl, true, 150);
+      // Select all pages by default
+      this.pdfSelectedPages = new Set();
+      for (let i = 1; i <= totalPages; i++) {
+        this.pdfSelectedPages.add(i);
       }
 
-      this.showAlert(`PDF imported — ${totalPages} page${totalPages === 1 ? '' : 's'} added.`, false);
+      this.pdfTotalPagesText.textContent = `Total: ${totalPages} page${totalPages === 1 ? '' : 's'}`;
+      this.pdfPreviewGrid.innerHTML = '';
+      this.updatePdfSelectionUI();
+
+      // Show the preview modal
+      if (window.bootstrap && this.pdfPreviewModalEl) {
+        if (!this.pdfPreviewModalInstance) {
+          this.pdfPreviewModalInstance = new bootstrap.Modal(this.pdfPreviewModalEl);
+        }
+        this.pdfPreviewModalInstance.show();
+      }
+
+      // Render the thumbnails sequentially
+      await this.renderPdfPreviews();
+
     } catch (err) {
-      console.error('PDF import error:', err);
-      this.showAlert(`PDF import failed: ${err.message}`, true);
+      console.error('PDF load error:', err);
+      this.showAlert(`PDF loading failed: ${err.message}`, true);
     }
+  }
+
+  async renderPdfPreviews() {
+    if (!this.pdfDocToImport) return;
+    const doc = this.pdfDocToImport;
+    const totalPages = doc.numPages;
+
+    const PREVIEW_SCALE = 0.45; // lightweight rendering for speed
+
+    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      // Check if another PDF was loaded in the meantime
+      if (this.pdfDocToImport !== doc) return;
+
+      const pageCol = document.createElement('div');
+      pageCol.className = 'col';
+      pageCol.dataset.pageNum = pageNum;
+
+      pageCol.innerHTML = `
+        <div class="card h-100 pdf-page-card" id="pdfCard-${pageNum}" style="cursor: pointer;">
+          <div class="position-absolute top-0 start-0 m-2 z-3">
+            <input class="form-check-input border-secondary shadow-sm pdf-page-checkbox" type="checkbox" id="pdfCheck-${pageNum}" checked style="width: 20px; height: 20px;">
+          </div>
+          <div class="card-body p-2 bg-dark-subtle d-flex align-items-center justify-content-center" style="height: 160px;">
+            <canvas id="pdfCanvas-${pageNum}" class="pdf-page-canvas img-fluid border rounded" style="max-height: 100%; max-width: 100%; object-fit: contain; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1);"></canvas>
+          </div>
+          <div class="card-footer py-1 px-2 text-center bg-white border-top-0">
+            <span class="small fw-semibold text-secondary">Page ${pageNum}</span>
+          </div>
+        </div>
+      `;
+
+      this.pdfPreviewGrid.appendChild(pageCol);
+
+      const card = document.getElementById(`pdfCard-${pageNum}`);
+      const checkbox = document.getElementById(`pdfCheck-${pageNum}`);
+
+      const togglePage = (e) => {
+        // Prevent event loop when clicking checkbox itself
+        if (e.target !== checkbox) {
+          checkbox.checked = !checkbox.checked;
+        }
+        if (checkbox.checked) {
+          this.pdfSelectedPages.add(pageNum);
+          card.classList.remove('deselected');
+        } else {
+          this.pdfSelectedPages.delete(pageNum);
+          card.classList.add('deselected');
+        }
+        this.updatePdfSelectionUI();
+      };
+
+      card.addEventListener('click', togglePage);
+
+      // Render the page on canvas
+      try {
+        const pdfPage = await doc.getPage(pageNum);
+        const viewport = pdfPage.getViewport({ scale: PREVIEW_SCALE });
+        const canvas = document.getElementById(`pdfCanvas-${pageNum}`);
+        if (canvas) {
+          canvas.width = Math.round(viewport.width);
+          canvas.height = Math.round(viewport.height);
+          await pdfPage.render({
+            canvasContext: canvas.getContext('2d'),
+            viewport
+          }).promise;
+        }
+      } catch (err) {
+        console.warn(`Failed to render thumbnail for PDF page ${pageNum}:`, err);
+      }
+    }
+  }
+
+  toggleAllPdfPages(select) {
+    if (!this.pdfDocToImport) return;
+    const totalPages = this.pdfDocToImport.numPages;
+
+    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      const checkbox = document.getElementById(`pdfCheck-${pageNum}`);
+      const card = document.getElementById(`pdfCard-${pageNum}`);
+      if (checkbox) checkbox.checked = select;
+      if (card) {
+        if (select) {
+          card.classList.remove('deselected');
+          this.pdfSelectedPages.add(pageNum);
+        } else {
+          card.classList.add('deselected');
+          this.pdfSelectedPages.delete(pageNum);
+        }
+      }
+    }
+    this.updatePdfSelectionUI();
+  }
+
+  updatePdfSelectionUI() {
+    const selectedCount = this.pdfSelectedPages.size;
+    this.pdfSelectedCountText.textContent = `${selectedCount} page${selectedCount === 1 ? '' : 's'} selected`;
+    
+    if (this.btnConfirmPdfImport) {
+      this.btnConfirmPdfImport.disabled = (selectedCount === 0);
+    }
+  }
+
+  async confirmPdfImport() {
+    if (!this.pdfDocToImport || this.pdfSelectedPages.size === 0) return;
+
+    const btn = this.btnConfirmPdfImport;
+    const oldHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importing...';
+
+    const pagesToImport = Array.from(this.pdfSelectedPages).sort((a, b) => a - b);
+    const totalSelected = pagesToImport.length;
+
+    this.showAlert(`Rendering ${totalSelected} selected PDF page${totalSelected === 1 ? '' : 's'} at full quality...`, false);
+    
+    setTimeout(async () => {
+      try {
+        this.saveHistoryState();
+        const SCALE = 2.0; // High quality render scale
+
+        for (let i = 0; i < pagesToImport.length; i++) {
+          const pageNum = pagesToImport[i];
+          const pdfPage = await this.pdfDocToImport.getPage(pageNum);
+          const viewport = pdfPage.getViewport({ scale: SCALE });
+
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(viewport.width);
+          canvas.height = Math.round(viewport.height);
+
+          await pdfPage.render({
+            canvasContext: canvas.getContext('2d'),
+            viewport
+          }).promise;
+
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+          this.addPage(dataUrl, true, 150);
+        }
+
+        this.showAlert(`Successfully imported ${totalSelected} PDF page${totalSelected === 1 ? '' : 's'}.`, false);
+        
+        if (this.pdfPreviewModalInstance) {
+          this.pdfPreviewModalInstance.hide();
+        }
+        
+        this.pdfDocToImport = null;
+        this.pdfSelectedPages.clear();
+
+      } catch (err) {
+        console.error('PDF import execution error:', err);
+        this.showAlert(`Import failed: ${err.message}`, true);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = oldHtml;
+      }
+    }, 50);
   }
 }
 

@@ -158,3 +158,55 @@ body {
   display: inline-block;
   animation: spin 0.8s linear infinite;
 }
+
+/* Premium Animations & UI Updates */
+.fade-in {
+  animation: fadeIn 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.thumbnail-item {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.thumbnail-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.08);
+}
+
+.btn {
+  transition: all 0.15s ease-in-out;
+}
+
+/* Glassmorphic header touch-ups */
+.modal-content {
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+
+.modal-header {
+  background: rgba(33, 37, 41, 0.92) !important;
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* PDF Preview Cards */
+.pdf-page-card {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+}
+.pdf-page-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.12) !important;
+  border-color: #adb5bd !important;
+}
+.pdf-page-card.deselected {
+  opacity: 0.45;
+  filter: grayscale(50%);
+  border-color: #dee2e6 !important;
+}
