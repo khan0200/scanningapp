@@ -3,9 +3,20 @@
   "version": "1.0.0",
   "description": "Node.js Native WIA & TWAIN Scanner Bridge Server for Canon G3410 and Windows Scanners",
   "main": "server.js",
+  "bin": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "build:exe": "npx pkg . --output ../dist/scanningapp.exe"
+  },
+  "pkg": {
+    "assets": [
+      "../frontend/**/*",
+      "bin/wia-scanner.exe"
+    ],
+    "targets": [
+      "node18-win-x64"
+    ]
   },
   "dependencies": {
     "cors": "^2.8.5",

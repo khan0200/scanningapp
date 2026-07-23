@@ -148,4 +148,16 @@ app.listen(PORT, () => {
   console.log(` Session Recovery: Enabled (backend/temp_session)`);
   console.log(` Hardware Engine: WIA Primary + TWAIN Fallback`);
   console.log(`====================================================`);
+
+  // Automatically open default browser on Windows
+  const { exec } = require('child_process');
+  const shouldOpen = !process.argv.includes('--no-open');
+  if (shouldOpen) {
+    console.log(`[Server] Automatically opening http://localhost:${PORT} in default browser...`);
+    exec(`cmd /c start "" "http://localhost:${PORT}"`, (err) => {
+      if (err) {
+        console.error('[Server] Could not automatically open browser:', err);
+      }
+    });
+  }
 });

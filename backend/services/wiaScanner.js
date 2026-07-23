@@ -1,7 +1,40 @@
 const { exec } = require('child_process');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
-const EXECUTABLE = path.join(__dirname, '../bin/wia-scanner.exe');
+// Determine if we are running inside a pkg package
+const isPkg = typeof process.pkg !== 'undefined';
+
+let EXECUTABLE = path.join(__dirname, '../bin/wia-scanner.exe');
+
+if (isPkg) {
+  // We need to extract the embedded wia-scanner.exe to a temporary directory so Windows can execute it
+  const tempDir = path.join(os.tmpdir(), 'scanningapp-bin');
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
+  const extractedPath = path.join(tempDir, 'wia-scanner.exe');
+  
+  try {
+    const embeddedPath = path.join(__dirname, '../bin/wia-scanner.exe');
+    let copyNeeded = true;
+    if (fs.existsSync(extractedPath)) {
+      const statExtracted = fs.statSync(extractedPath);
+      const statEmbedded = fs.statSync(embeddedPath);
+      if (statExtracted.size === statEmbedded.size) {
+        copyNeeded = false;
+      }
+    }
+    if (copyNeeded) {
+      fs.copyFileSync(embeddedPath, extractedPath);
+    }
+    EXECUTABLE = extractedPath;
+  } catch (err) {
+    console.error('Failed to extract wia-scanner.exe:', err);
+  }
+}
+
 let activeProc = null;
 
 /**

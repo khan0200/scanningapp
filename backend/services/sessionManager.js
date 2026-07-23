@@ -1,12 +1,21 @@
 const fs = require('fs');
 const path = require('path');
 
-const TEMP_SESSION_DIR = path.join(__dirname, '../temp_session');
+const isPkg = typeof process.pkg !== 'undefined';
+const TEMP_SESSION_DIR = isPkg 
+  ? path.join(path.dirname(process.execPath), 'temp_session')
+  : path.join(__dirname, '../temp_session');
 
 // Ensure temp_session folder exists
 function ensureTempDir() {
+  console.log('[SessionManager] Ensuring directory exists:', TEMP_SESSION_DIR);
   if (!fs.existsSync(TEMP_SESSION_DIR)) {
-    fs.mkdirSync(TEMP_SESSION_DIR, { recursive: true });
+    try {
+      fs.mkdirSync(TEMP_SESSION_DIR, { recursive: true });
+      console.log('[SessionManager] Created directory:', TEMP_SESSION_DIR);
+    } catch (err) {
+      console.error('[SessionManager] Failed to create directory:', err);
+    }
   }
 }
 
