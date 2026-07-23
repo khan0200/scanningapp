@@ -2191,6 +2191,68 @@ class ScannerApp {
       }
     });
 
+    // Clipboard Paste listener
+    window.addEventListener('paste', (e) => {
+      const active = document.activeElement;
+      const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT');
+      if (isInput) return;
+
+      if (e.clipboardData && e.clipboardData.items) {
+        const items = Array.from(e.clipboardData.items);
+        const files = Array.from(e.clipboardData.files || []);
+        let hasImported = false;
+
+        items.forEach((item) => {
+          if (item.type.startsWith('image/')) {
+            const blob = item.getAsFile();
+            if (blob) {
+              hasImported = true;
+              this.saveHistoryState();
+              const reader = new FileReader();
+              reader.onload = (event) => {
+                this.addPage(event.target.result, true, 300);
+                this.showAlert('Image pasted from clipboard.', false);
+              };
+              reader.readAsDataURL(blob);
+            }
+          } else if (item.type === 'application/pdf') {
+            const blob = item.getAsFile();
+            if (blob) {
+              hasImported = true;
+              const reader = new FileReader();
+              reader.onload = (event) => {
+                this.importPdfFromArrayBuffer(event.target.result);
+              };
+              reader.readAsArrayBuffer(blob);
+            }
+          }
+        });
+
+        if (!hasImported && files.length > 0) {
+          const imgFiles = files.filter((f) => f.type.startsWith('image/'));
+          const pdfFiles = files.filter((f) => f.type === 'application/pdf');
+
+          if (imgFiles.length > 0) {
+            hasImported = true;
+            this.saveHistoryState();
+            imgFiles.forEach((file) => {
+              const reader = new FileReader();
+              reader.onload = (event) => this.addPage(event.target.result, true, 300);
+              reader.readAsDataURL(file);
+            });
+            this.showAlert(`${imgFiles.length} image(s) pasted from clipboard.`, false);
+          }
+
+          pdfFiles.forEach((file) => {
+            hasImported = true;
+            const reader = new FileReader();
+            reader.onload = (event) => this.importPdfFromArrayBuffer(event.target.result);
+            reader.readAsArrayBuffer(file);
+          });
+        }
+      }
+    });
+
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
       const active = document.activeElement;
