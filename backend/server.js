@@ -85,15 +85,15 @@ app.get('/scanners', async (req, res) => {
  * Automatically tries WIA first, then falls back to TWAIN
  */
 app.post('/scan', async (req, res) => {
-  const { scannerId, dpi, colorMode, source, paperSize } = req.body;
+  const { scannerId, scannerName, dpi, colorMode, source, paperSize } = req.body;
 
-  console.log(`[Scan Request] Scanner: ${scannerId}, DPI: ${dpi}, Mode: ${colorMode}, Source: ${source}, Paper: ${paperSize}`);
+  console.log(`[Scan Request] Scanner: ${scannerId} (${scannerName}), DPI: ${dpi}, Mode: ${colorMode}, Source: ${source}, Paper: ${paperSize}`);
 
   // 1. High-Performance Scan Engine: NAPS2 (if available)
   if (hasNaps2()) {
     try {
       console.log('[Scan] NAPS2 is installed. Executing scan via NAPS2.Console.exe...');
-      const napsResult = await scanNaps2({ scannerId, dpi, colorMode, source, paperSize });
+      const napsResult = await scanNaps2({ scannerId, scannerName, dpi, colorMode, source, paperSize });
       if (napsResult && (napsResult.success || napsResult.cancelled)) {
         return res.json(napsResult);
       } else {

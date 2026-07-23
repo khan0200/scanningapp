@@ -944,6 +944,7 @@ class ScannerApp {
     // Crop Modal elements
     this.cropModalEl = document.getElementById('cropModal');
     this.cropCanvas = document.getElementById('cropCanvas');
+    this.cropMagnifier = document.getElementById('cropMagnifier');
     this.cropBox = document.getElementById('cropBox');
     this.cropDimensions = document.getElementById('cropDimensions');
     this.btnAutoDetect = document.getElementById('btnAutoDetect');
@@ -1200,12 +1201,14 @@ class ScannerApp {
       this.cropState.startX = e.clientX;
       this.cropState.startY = e.clientY;
       this.updateCropBoxDOM();
+      this.updateMagnifier();
     });
 
     window.addEventListener('mouseup', () => {
       this.cropState.isDragging = false;
       this.cropState.activeHandle = null;
       this.cropBox.style.cursor = 'move';
+      this.hideMagnifier();
     });
 
     if (this.btnResetCrop) {
@@ -1237,6 +1240,115 @@ class ScannerApp {
 
     if (this.cropDimensions) {
       this.cropDimensions.textContent = `Selection: ${realW_mm} × ${realH_mm} mm`;
+    }
+  }
+
+  updateMagnifier() {
+    if (!this.cropMagnifier || !this.cropCanvas) return;
+
+    const h = this.cropState.activeHandle;
+    if (!h || h === 'move' || !this.cropState.isDragging) {
+      this.hideMagnifier();
+      return;
+    }
+
+    const canvasW = this.cropState.canvasW;
+    const canvasH = this.cropState.canvasH;
+    const boxX = this.cropState.boxX;
+    const boxY = this.cropState.boxY;
+    const boxW = this.cropState.boxW;
+    const boxH = this.cropState.boxH;
+
+    // Calculate focus point on the display canvas
+    let focusX = 0;
+    let focusY = 0;
+
+    if (h === 'handle-nw') {
+      focusX = boxX;
+      focusY = boxY;
+    } else if (h === 'handle-ne') {
+      focusX = boxX + boxW;
+      focusY = boxY;
+    } else if (h === 'handle-se') {
+      focusX = boxX + boxW;
+      focusY = boxY + boxH;
+    } else if (h === 'handle-sw') {
+      focusX = boxX;
+      focusY = boxY + boxH;
+    } else if (h === 'handle-n') {
+      focusX = boxX + boxW / 2;
+      focusY = boxY;
+    } else if (h === 'handle-s') {
+      focusX = boxX + boxW / 2;
+      focusY = boxY + boxH;
+    } else if (h === 'handle-e') {
+      focusX = boxX + boxW;
+      focusY = boxY + boxH / 2;
+    } else if (h === 'handle-w') {
+      focusX = boxX;
+      focusY = boxY + boxH / 2;
+    } else {
+      this.hideMagnifier();
+      return;
+    }
+
+    // Determine target location for the floating magnifier (opposite quadrant)
+    let posX = 10;
+    let posY = 10;
+    if (focusX < canvasW / 2) {
+      posX = canvasW - 130;
+    }
+    if (focusY < canvasH / 2) {
+      posY = canvasH - 130;
+    }
+
+    // Set position and show magnifier
+    this.cropMagnifier.style.left = `${posX}px`;
+    this.cropMagnifier.style.top = `${posY}px`;
+    this.cropMagnifier.style.display = 'block';
+
+    const ctx = this.cropMagnifier.getContext('2d');
+    if (!ctx) return;
+
+    const magSize = 120;
+    const zoom = 3;
+    const srcSize = magSize / zoom; // 40px
+
+    const sx = focusX - srcSize / 2;
+    const sy = focusY - srcSize / 2;
+
+    // Fill white background in case selection goes out of image bounds
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, magSize, magSize);
+
+    // Draw the zoomed region from the image canvas
+    ctx.drawImage(this.cropCanvas, sx, sy, srcSize, srcSize, 0, 0, magSize, magSize);
+
+    // Draw crop boundaries in high-contrast dashed lines
+    const mx1 = (boxX - sx) * zoom;
+    const my1 = (boxY - sy) * zoom;
+    const mx2 = (boxX + boxW - sx) * zoom;
+    const my2 = (boxY + boxH - sy) * zoom;
+
+    ctx.strokeStyle = '#0d6efd';
+    ctx.lineWidth = 2 * zoom; // 6px thick line for high visibility at 3x zoom
+    ctx.setLineDash([4 * zoom, 4 * zoom]); // 12px dashes
+    ctx.strokeRect(mx1, my1, mx2 - mx1, my2 - my1);
+
+    // Draw the active handle indicator (solid blue circle with white border) in the center of the magnifier
+    ctx.fillStyle = '#0d6efd';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(magSize / 2, magSize / 2, 6, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  hideMagnifier() {
+    if (this.cropMagnifier) {
+      this.cropMagnifier.style.display = 'none';
     }
   }
 
@@ -1692,8 +1804,12 @@ class ScannerApp {
 
     this.scanAbortController = new AbortController();
 
+    const selectedScanner = this.scanners.find(s => s.id === this.scannerSelect.value);
+    const scannerName = selectedScanner ? selectedScanner.name : (this.scannerSelect.options[this.scannerSelect.selectedIndex]?.textContent || '');
+
     const payload = {
       scannerId: this.scannerSelect.value,
+      scannerName: scannerName,
       dpi: parseInt(this.dpiSelect.value, 10),
       colorMode: this.colorSelect.value,
       source: this.sourceSelect.value,
