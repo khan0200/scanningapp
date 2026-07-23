@@ -20,18 +20,6 @@
 </head>
 <body class="d-flex flex-column vh-100 bg-body">
 
-  <!-- Top Navbar / Header -->
-  <nav class="navbar navbar-dark bg-dark px-3 py-2 shadow-sm">
-    <div class="container-fluid p-0">
-      <a class="navbar-brand d-flex align-items-center gap-2 fw-semibold fs-6" href="#">
-        <i class="bi bi-printer text-primary fs-5"></i>
-        <span>NAPS2 Web Document Scanner</span>
-      </a>
-      <div class="d-flex align-items-center">
-        <span class="badge bg-primary rounded-pill px-3 py-2 fs-7" id="pageCounter">0 Pages</span>
-      </div>
-    </div>
-  </nav>
 
   <!-- Hardware & Scanner Action Toolbar -->
   <div class="bg-body-tertiary border-bottom p-2 shadow-sm">
@@ -291,7 +279,10 @@
           <input class="form-check-input me-1" type="checkbox" id="selectAllPages" title="Select / Deselect All Pages">
           <label class="form-check-label fw-bold small text-secondary" for="selectAllPages" style="cursor: pointer;">PAGES</label>
         </div>
-        <span class="badge bg-secondary" id="thumbnailCount">0 items</span>
+        <div class="d-flex align-items-center gap-1">
+          <span class="badge bg-primary" id="pageCounter">0 Pages</span>
+          <span class="badge bg-secondary" id="thumbnailCount">0 items</span>
+        </div>
       </div>
       <div class="thumbnail-list flex-grow-1 overflow-auto pe-1" id="thumbnailList"></div>
     </div>
